@@ -16,6 +16,7 @@ class ContextTransformer(nn.Module):
         self.use_phase = config.use_phase
         self.use_traj  = config.use_traj
         self.use_score = config.use_score
+        self.decoupled_encoders = config.get("decoupled_encoders", False)
 
         # input dimension
         self.d_motion    = dataset.motion_dim
@@ -31,14 +32,38 @@ class ContextTransformer(nn.Module):
         self.n_layer = config.n_layer
 
         # network modules
-        self.encoder = nn.Sequential(
-            nn.Linear(self.d_motion + self.config.d_mask + self.d_phase + self.d_traj, self.config.d_encoder_h),
-            nn.PReLU(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.config.d_encoder_h, self.config.d_model),
-            nn.PReLU(),
-            nn.Dropout(self.dropout)
-        )
+        if self.decoupled_encoders:
+            # Decoupled dual-encoder architecture
+            # 1. Pose Encoder (handles motion, mask, phase)
+            pose_input_dim = self.d_motion + self.config.d_mask + self.d_phase
+            self.pose_encoder = nn.Sequential(
+                nn.Linear(pose_input_dim, self.config.d_encoder_h),
+                nn.PReLU(),
+                nn.Dropout(self.dropout),
+                nn.Linear(self.config.d_encoder_h, self.config.d_model),
+                nn.PReLU(),
+                nn.Dropout(self.dropout)
+            )
+            # 2. Trajectory Encoder (only handles traj)
+            if self.use_traj:
+                self.traj_encoder = nn.Sequential(
+                    nn.Linear(self.d_traj, self.config.d_encoder_h),
+                    nn.PReLU(),
+                    nn.Dropout(self.dropout),
+                    nn.Linear(self.config.d_encoder_h, self.config.d_model),
+                    nn.PReLU(),
+                    nn.Dropout(self.dropout)
+                )
+        else:
+            # Original unified encoder
+            self.encoder = nn.Sequential(
+                nn.Linear(self.d_motion + self.config.d_mask + self.d_phase + self.d_traj, self.config.d_encoder_h),
+                nn.PReLU(),
+                nn.Dropout(self.dropout),
+                nn.Linear(self.config.d_encoder_h, self.config.d_model),
+                nn.PReLU(),
+                nn.Dropout(self.dropout)
+            )
 
         if self.use_phase:
             # phase decoder
@@ -192,15 +217,35 @@ class ContextTransformer(nn.Module):
         # position index relative to context and target frame
         keyframe_pos = self.get_keyframe_pos_indices(T).to(device)
 
-        # input
-        x = torch.cat([motion * data_mask, data_mask], dim=-1)
-        if self.use_phase and phase is not None:
-            x = torch.cat([x, phase * data_mask], dim=-1)
-        if self.use_traj and traj is not None:
-            x = torch.cat([x, traj], dim=-1)
+        # input processing based on encoder architecture
+        if self.decoupled_encoders:
+            # Prepare pose-related input
+            pose_input = torch.cat([motion * data_mask, data_mask], dim=-1)
+            if self.use_phase and phase is not None:
+                pose_input = torch.cat([pose_input, phase * data_mask], dim=-1)
+            
+            # Encode pose inputs
+            x = self.pose_encoder(pose_input)
+            
+            # Encode trajectory separately and apply soft guidance
+            if self.use_traj and traj is not None:
+                traj_embedding = self.traj_encoder(traj)
+                
+                # Apply trajectory guidance scale
+                guidance_scale = self.config.get("traj_guidance_scale", 1.0)
+                
+                # Feature fusion by addition with scaling
+                x = x + traj_embedding * guidance_scale
+        else:
+            # Original unified encoding
+            x = torch.cat([motion * data_mask, data_mask], dim=-1)
+            if self.use_phase and phase is not None:
+                x = torch.cat([x, phase * data_mask], dim=-1)
+            if self.use_traj and traj is not None:
+                x = torch.cat([x, traj], dim=-1)
 
-        # encoder
-        x = self.encoder(x)
+            # encoder
+            x = self.encoder(x)
 
         # positional embedding
         x = x + self.keyframe_pos_layer(keyframe_pos)
@@ -268,6 +313,7 @@ class DetailTransformer(nn.Module):
         self.use_traj  = config.use_traj
         self.use_score = config.use_score
         self.use_kf_emb = config.get("use_kf_emb", False)
+        self.decoupled_encoders = config.get("decoupled_encoders", False)
 
         # input dimension
         self.d_motion    = dataset.motion_dim
@@ -284,14 +330,39 @@ class DetailTransformer(nn.Module):
         self.n_layer = config.n_layer
 
         # network modules
-        self.encoder = nn.Sequential(
-            nn.Linear(self.d_motion + self.config.d_mask + self.d_phase + self.d_traj, self.config.d_encoder_h),
-            nn.PReLU(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.config.d_encoder_h, self.config.d_model),
-            nn.PReLU(),
-            nn.Dropout(self.dropout)
-        )
+        if self.decoupled_encoders:
+            # Decoupled dual-encoder architecture
+            # 1. Pose Encoder (handles motion, mask, phase)
+            pose_input_dim = self.d_motion + self.config.d_mask + self.d_phase
+            self.pose_encoder = nn.Sequential(
+                nn.Linear(pose_input_dim, self.config.d_encoder_h),
+                nn.PReLU(),
+                nn.Dropout(self.dropout),
+                nn.Linear(self.config.d_encoder_h, self.config.d_model),
+                nn.PReLU(),
+                nn.Dropout(self.dropout)
+            )
+            # 2. Trajectory Encoder (only handles traj)
+            if self.use_traj:
+                self.traj_encoder = nn.Sequential(
+                    nn.Linear(self.d_traj, self.config.d_encoder_h),
+                    nn.PReLU(),
+                    nn.Dropout(self.dropout),
+                    nn.Linear(self.config.d_encoder_h, self.config.d_model),
+                    nn.PReLU(),
+                    nn.Dropout(self.dropout)
+                )
+        else:
+            # Original unified encoder
+            self.encoder = nn.Sequential(
+                nn.Linear(self.d_motion + self.config.d_mask + self.d_phase + self.d_traj, self.config.d_encoder_h),
+                nn.PReLU(),
+                nn.Dropout(self.dropout),
+                nn.Linear(self.config.d_encoder_h, self.config.d_model),
+                nn.PReLU(),
+                nn.Dropout(self.dropout)
+            )
+            
         if self.use_kf_emb:
             self.keyframe_pos_layer = nn.Sequential(
                 nn.Linear(2, self.config.d_model),
@@ -408,7 +479,7 @@ class DetailTransformer(nn.Module):
             # (1, seq, 2)
             return keyframe_pos_indices[None]
     
-    def forward(self, motion, midway_targets, phase=None, traj=None):
+    def forward(self, motion, midway_targets, phase=None, traj=None, attention_mask=None):
         B, T, M = motion.shape
         device  = motion.device
 
@@ -416,17 +487,42 @@ class DetailTransformer(nn.Module):
         data_mask = self.get_data_mask(T, midway_targets).to(device)
         data_mask = data_mask.expand(B, T, -1)
 
-        # input
+        # Store inputs for residual connections
         motion_in = motion
-        x = torch.cat([motion, data_mask], dim=-1)
         if self.use_phase and phase is not None:
             phase_in = phase
-            x = torch.cat([x, phase], dim=-1)
-        if self.use_traj and traj is not None:
-            x = torch.cat([x, traj], dim=-1)
 
-        # encoder
-        x = self.encoder(x)
+        # Input processing based on encoder architecture
+        if self.decoupled_encoders:
+            # Prepare pose-related input
+            pose_input = torch.cat([motion, data_mask], dim=-1)
+            if self.use_phase and phase is not None:
+                pose_input = torch.cat([pose_input, phase], dim=-1)
+            
+            # Encode pose inputs
+            x = self.pose_encoder(pose_input)
+            
+            # Encode trajectory separately and apply soft guidance
+            if self.use_traj and traj is not None:
+                traj_embedding = self.traj_encoder(traj)
+                
+                # Apply trajectory guidance scale
+                guidance_scale = self.config.get("traj_guidance_scale", 1.0)
+                
+                # Feature fusion by addition with scaling
+                x = x + traj_embedding * guidance_scale
+        else:
+            # Original unified encoding
+            x = torch.cat([motion, data_mask], dim=-1)
+            if self.use_phase and phase is not None:
+                x = torch.cat([x, phase], dim=-1)
+            if self.use_traj and traj is not None:
+                x = torch.cat([x, traj], dim=-1)
+
+            # encoder
+            x = self.encoder(x)
+
+        # Add keyframe positional embedding if configured
         if self.use_kf_emb:
             keyframe_pos = self.get_keyframe_pos_indices(T).to(device)
             x = x + self.keyframe_pos_layer(keyframe_pos)
@@ -437,7 +533,7 @@ class DetailTransformer(nn.Module):
 
         # Transformer layers
         for i in range(self.n_layer):
-            x = self.att_layers[i](x, rel_pos_emb, mask=None)
+            x = self.att_layers[i](x, rel_pos_emb, mask=attention_mask)
             x = self.pff_layers[i](x)
         if self.pre_lnorm:
             x = self.layer_norm(x)

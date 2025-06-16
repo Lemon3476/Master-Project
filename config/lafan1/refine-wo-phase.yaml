@@ -8,7 +8,7 @@ use_phase: false
 use_traj: true
 use_score: true
 
-save_dir: "save/lafan1/RefineNet-NoPhase"
+save_dir: "save/lafan1/RefineNet"
 save_interval: 50
 val_interval: 10
 

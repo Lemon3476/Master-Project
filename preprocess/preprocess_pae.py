@@ -6,6 +6,7 @@ sys.path.append(".")
 import os
 import numpy as np
 import argparse
+import traceback
 from aPyOpenGL import agl, transforms as trf
 
 from utils import utils
@@ -61,12 +62,33 @@ def preprocess(config, dataset, train=True):
     if dataset == "lafan1":
         # load motions
         fbx_path = os.path.join(config.dataset_dir, "train.fbx" if train else "test.fbx")
-        fbx = agl.FBX(fbx_path)
-
-        # get features
-        motions = fbx.motions()
-        skeleton = fbx.skeleton()
-        fps = fbx.fps()
+        # Check if file exists
+        if not os.path.exists(fbx_path):
+            # Try looking in fbx-dataset subdirectory
+            alt_fbx_path = os.path.join("dataset/fbx-dataset/lafan1", "train.fbx" if train else "test.fbx")
+            if os.path.exists(alt_fbx_path):
+                print(f"File not found at {fbx_path}, using alternative path: {alt_fbx_path}")
+                fbx_path = alt_fbx_path
+            else:
+                print(f"Error: FBX file not found at either {fbx_path} or {alt_fbx_path}")
+                
+        print(f"Loading FBX file from: {fbx_path}")
+        try:
+            fbx = agl.FBX(fbx_path)
+            print(f"FBX parser status: {'Available' if agl.fbx.FBX_AVAILABLE else 'Not Available'}")
+            print(f"FBX parser object: {fbx.parser}")
+            
+            # get features
+            print("Getting motions...")
+            motions = fbx.motions()
+            print("Getting skeleton...")
+            skeleton = fbx.skeleton()
+            print("Getting fps...")
+            fps = fbx.fps()
+        except Exception as e:
+            print(f"Error in FBX processing: {e}")
+            traceback.print_exc()
+            raise
 
     elif dataset == "human36m":
         dataset_dir = config.dataset_dir
@@ -119,15 +141,15 @@ def preprocess(config, dataset, train=True):
     else:
         raise ValueError(f"Invalid dataset: {dataset}")
     
-    # # get features
-    # features = get_features(motions, skeleton, config.window_length, config.window_offset, fps=fps)
-    # features = features.reshape(features.shape[0], features.shape[1], -1) # (B, window_length, J*3)
+    # get features
+    features = get_features(motions, skeleton, config.window_length, config.window_offset, fps=fps)
+    features = features.reshape(features.shape[0], features.shape[1], -1) # (B, window_length, J*3)
 
-    # # save
-    # save_dir = os.path.join(config.dataset_dir, "PAE")
-    # os.makedirs(save_dir, exist_ok=True)
-    # np.savez_compressed(os.path.join(save_dir, f"{'train' if train else 'test'}-{config.npz_path}"), motion=features)
-    # print(f"Saved {'train' if train else 'test'} dataset (shape: {features.shape})")
+    # save
+    save_dir = os.path.join(config.dataset_dir, "PAE")
+    os.makedirs(save_dir, exist_ok=True)
+    np.savez_compressed(os.path.join(save_dir, f"{'train' if train else 'test'}-{config.npz_path}"), motion=features)
+    print(f"Saved {'train' if train else 'test'} dataset (shape: {features.shape})")
     num_frames = 0
     for m in motions:
         num_frames += len(m.poses)

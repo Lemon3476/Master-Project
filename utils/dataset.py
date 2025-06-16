@@ -160,3 +160,166 @@ class PAEDataset(Dataset):
             std = torch.std(feat, dim=(0, 1)) + 1e-8
             torch.save({"mean": mean, "std": std}, os.path.join(self.config.dataset_dir, "PAE", "motion_statistics.pth"))
         return mean.to(device), std.to(device)
+
+
+class SegmentDataset(Dataset):
+    """
+    用于SegmentNet训练的数据集类，加载预处理的段数据。
+    
+    预处理的数据包括：
+    - gt_motion: 真实运动段 (N, max_segment_length, motion_dim)
+    - draft_motion: 插值后的草稿段 (N, max_segment_length, motion_dim)
+    - phase: 相位数据 (可选)
+    - traj: 轨迹数据 (可选)
+    - contact: 接触数据 (可选)
+    - score: 分数数据 (可选)
+    - overlap_frames: 每个段的重叠帧数
+    """
+    def __init__(self, train, config, verbose=True, preloaded_stats=None):
+        self.train = train
+        self.config = config
+        self.preloaded_stats = preloaded_stats
+        
+        # 确定数据文件路径
+        filename = f"{config.dataset_dir.split('/')[1]}-segment-{'train' if train else 'val'}.npz"
+        data_path = os.path.join(config.dataset_dir, filename)
+        
+        # 加载预处理的段数据
+        if not os.path.exists(data_path):
+            raise FileNotFoundError(f"预处理的段数据文件 {data_path} 不存在。请先运行 preprocess/preprocess_segments.py 生成数据。")
+        
+        # data = np.load(data_path)
+        data = np.load(data_path, mmap_mode='r')
+        
+        # 加载必要的数据
+        self.gt_motion = torch.from_numpy(data["gt_motion"]).float()
+        self.draft_motion = torch.from_numpy(data["draft_motion"]).float()
+        self.overlap_frames = torch.from_numpy(data["overlap_frames"]).long()
+        
+        # 加载可选数据
+        self.has_phase = "phase" in data
+        self.has_traj = "traj" in data
+        self.has_contact = "contact" in data
+        self.has_score = "score" in data
+        
+        if self.has_phase:
+            self.phase = torch.from_numpy(data["phase"]).float()
+        if self.has_traj:
+            self.traj = torch.from_numpy(data["traj"]).float()
+        if self.has_contact:
+            self.contact = torch.from_numpy(data["contact"]).float()
+        if self.has_score:
+            self.score = torch.from_numpy(data["score"]).float()
+        
+        # 打印数据信息
+        if verbose:
+            print("Segment Dataset Shapes:")
+            print(f"\t- gt_motion.shape: {self.gt_motion.shape}")
+            print(f"\t- draft_motion.shape: {self.draft_motion.shape}")
+            if self.has_phase:
+                print(f"\t- phase.shape: {self.phase.shape}")
+            if self.has_traj:
+                print(f"\t- traj.shape: {self.traj.shape}")
+            if self.has_contact:
+                print(f"\t- contact.shape: {self.contact.shape}")
+            if self.has_score:
+                print(f"\t- score.shape: {self.score.shape}")
+        
+        # 数据维度
+        self.num_segments = self.gt_motion.shape[0]
+        self.segment_length = self.gt_motion.shape[1]
+        self.motion_dim = self.gt_motion.shape[2]
+        
+        if self.has_phase:
+            self.phase_dim = self.phase.shape[2]
+        else:
+            self.phase_dim = 0
+            
+        if self.has_traj:
+            self.traj_dim = self.traj.shape[2]
+        else:
+            self.traj_dim = 0
+            
+        if self.has_score:
+            self.score_dim = self.score.shape[2]
+        else:
+            self.score_dim = 0
+        
+        # 加载骨架
+        self.skeleton = self.load_skeleton(os.path.join(config.dataset_dir, "skeleton.pkl"))
+    
+    def load_skeleton(self, path) -> agl.Skeleton:
+        if not os.path.exists(path):
+            print(f"Cannot find skeleton from {path}")
+            skeleton = agl.Skeleton()
+        else:
+            with open(path, "rb") as f:
+                skeleton = pickle.load(f)
+        return skeleton
+    
+    def __len__(self):
+        return self.num_segments
+    
+    def __getitem__(self, idx):
+        # 构建返回的字典
+        item = {
+            "gt_motion": self.gt_motion[idx],
+            "draft_motion": self.draft_motion[idx],
+            "overlap_frames": self.overlap_frames[idx]
+        }
+        
+        # 添加可选数据
+        if self.has_phase:
+            item["phase"] = self.phase[idx]
+        if self.has_traj:
+            item["traj"] = self.traj[idx]
+        if self.has_contact:
+            item["contact"] = self.contact[idx]
+        if self.has_score:
+            item["score"] = self.score[idx]
+        
+        return item
+    
+    def motion_statistics(self, device="cuda"):
+        # 如果有预加载的统计数据，直接使用
+        if self.preloaded_stats is not None:
+            mean, std = self.preloaded_stats[0], self.preloaded_stats[1]
+            return mean.to(device), std.to(device)
+            
+        # 否则，使用与MotionDataset相同的统计数据
+        # 这确保了段数据和原始数据使用相同的归一化参数
+        stats_path = os.path.join(self.config.dataset_dir, "train-motion-statistics.pth")
+        if os.path.exists(stats_path):
+            stats = torch.load(stats_path)
+            mean = stats["mean"].to(device)
+            std = stats["std"].to(device)
+        else:
+            # 如果找不到预计算的统计数据，使用当前数据计算
+            mean = torch.mean(self.gt_motion, dim=(0, 1))
+            std = torch.std(self.gt_motion, dim=(0, 1)) + 1e-8
+        
+        return mean.to(device), std.to(device)
+    
+    def traj_statistics(self, device="cuda"):
+        # 如果有预加载的统计数据，直接使用
+        if self.preloaded_stats is not None and len(self.preloaded_stats) >= 4:
+            traj_mean, traj_std = self.preloaded_stats[2], self.preloaded_stats[3]
+            if traj_mean is not None:
+                return traj_mean.to(device), traj_std.to(device)
+                
+        # 如果没有轨迹数据，返回None
+        if not self.has_traj:
+            return None, None
+            
+        # 否则，使用与MotionDataset相同的统计数据
+        stats_path = os.path.join(self.config.dataset_dir, "train-traj-statistics.pth")
+        if os.path.exists(stats_path):
+            stats = torch.load(stats_path)
+            mean = stats["mean"].to(device)
+            std = stats["std"].to(device)
+        else:
+            # 如果找不到预计算的统计数据，使用当前数据计算
+            mean = torch.mean(self.traj, dim=(0, 1))
+            std = torch.std(self.traj, dim=(0, 1)) + 1e-8
+        
+        return mean.to(device), std.to(device)

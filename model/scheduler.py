@@ -5,17 +5,27 @@ from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 
 class NoamScheduler(_LRScheduler):
-    def __init__(self, optimizer, d_model, warmup_steps, last_epoch=-1, lr=None):
+    """
+    NoamScheduler实现了"Attention is All You Need"论文中的学习率调度策略，
+    并增加了对分布式训练的支持。
+    
+    在多卡训练时，根据GPU数量(world_size)自动缩放学习率和warmup步数，
+    确保不同规模的训练获得相似的收敛性能。
+    """
+    def __init__(self, optimizer, d_model, warmup_steps, last_epoch=-1, lr=None, world_size=1):
         self.d_model = d_model
-        self.warmup_steps = warmup_steps
-        self.iters = 0 # to track the total number of iterations
+        # 根据并行的GPU数量，缩放warmup步数
+        self.warmup_steps = warmup_steps / world_size
+        self.world_size = world_size  # 保存world_size用于学习率缩放
+        self.iters = 0  # 跟踪迭代总数
         self.lr = lr
         super(NoamScheduler, self).__init__(optimizer, last_epoch)
 
     def get_lr(self):
         self.iters += 1
         if self.lr is not None:
-            return [self.lr for _ in self.base_lrs]
+            # 如果使用固定lr，也根据world_size进行缩放
+            return [self.lr * self.world_size for _ in self.base_lrs]
         
         if self.iters < self.warmup_steps:
             scale = self.iters * (self.warmup_steps ** -1.5)
@@ -23,8 +33,10 @@ class NoamScheduler(_LRScheduler):
             scale = self.iters ** -0.5
         
         d_model_sqrt_inv = self.d_model ** -0.5
-        return [d_model_sqrt_inv * scale for _ in self.base_lrs]
-        # return [1e-4 for _ in self.base_lrs]
+        
+        # 将最终的学习率乘以world_size，以遵循线性缩放规则
+        return [d_model_sqrt_inv * scale * self.world_size for _ in self.base_lrs]
+        # return [1e-4 * self.world_size for _ in self.base_lrs]
 
 
 """

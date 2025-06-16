@@ -143,8 +143,26 @@ def get_keyframes_by_score(config, score):
                 break
 
             # top-scored frame
-            top_keyframe = torch.argmax(score[b:b+1, trans_start+config.min_kf_dist:trans_end+1], dim=1) + trans_start + config.min_kf_dist
-            top_keyframe = top_keyframe.item()
+            # Make sure we have a valid range to extract
+            if trans_start + config.min_kf_dist < trans_end + 1:
+                # Use direct indexing for batch dimension
+                score_slice = score[b, trans_start+config.min_kf_dist:trans_end+1]
+                
+                # Handle different dimensions of score_slice
+                if score_slice.dim() > 1:
+                    # Flatten extra dimensions for argmax
+                    flat_slice = score_slice.reshape(-1)
+                    top_keyframe_idx = torch.argmax(flat_slice, dim=0)
+                else:
+                    # Already flat, just get argmax
+                    top_keyframe_idx = torch.argmax(score_slice, dim=0)
+                
+                # Add the offset to get the global frame index
+                top_keyframe = top_keyframe_idx.item() + trans_start + config.min_kf_dist
+            else:
+                # Fallback: if valid range is empty, use the midpoint
+                top_keyframe = trans_start
+            
             keyframes.append(top_keyframe)
             trans_start = top_keyframe + 1
         res.append(keyframes)
@@ -257,6 +275,12 @@ def remove_quat_discontinuities(quats):
 
 def get_contact(motion, skeleton, joint_ids, threshold):
     B, T, M = motion.shape
+    
+    # Check if joint_ids is empty
+    if len(joint_ids) == 0:
+        # If joint_ids is not defined, return an empty tensor with shape (B, T, 0)
+        return torch.zeros((B, T, 0), device=motion.device)
+    
     local_ortho6ds, root_pos = torch.split(motion, [M-3, 3], dim=-1)
     local_ortho6ds = local_ortho6ds.reshape(B, T, -1, 6)
     _, global_positions = trf.t_ortho6d.fk(local_ortho6ds, root_pos, skeleton)

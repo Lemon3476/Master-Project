@@ -125,6 +125,8 @@ class MultiHeadedAttention(nn.Module):
             # apply attention mask
             atten_score = atten_score.masked_fill(mask, float("-inf"))
         atten_score = atten_score.softmax(dim=-1)
+        # 处理0/0的情况，防止NaN的产生和传播
+        atten_score = torch.nan_to_num(atten_score, nan=0.0)
         atten_score = self.atten_dropout_layer(atten_score)
 
         # (batch, n_head, q_len, d_head)
@@ -271,6 +273,8 @@ class RelMultiHeadedAttention(nn.Module):
             # apply attention mask
             atten_score = atten_score.masked_fill(mask, float("-inf"))
         atten_score = atten_score.softmax(dim=-1)
+        # 处理0/0的情况，防止NaN的产生和传播
+        atten_score = torch.nan_to_num(atten_score, nan=0.0)
         atten_score = self.atten_dropout_layer(atten_score)
 
         # (batch, n_head, q_len, d_head)

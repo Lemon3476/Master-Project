@@ -24,9 +24,10 @@ if __name__ =="__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, required=True)
     parser.add_argument("--config", type=str, default="context.yaml")
+    parser.add_argument("--gpu", type=int, default=0, help="GPU device ID to use")
     args = parser.parse_args()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
     config = utils.load_config(f"config/{args.dataset}/{args.config}")
     utils.seed()
 

@@ -20,11 +20,11 @@ warmup_iters: 8000
 min_trans: 5
 max_trans: 90
 contact_joints: [ "mixamorig:LeftFoot", "mixamorig:LeftToeBase", "mixamorig:RightFoot", "mixamorig:RightToeBase" ]
-contact_threshold: 2e-4
+contact_threshold: 1e-4
 midway_amount: 0.1
 midway_prob: 0.5
 min_kf_dist: 5
-max_kf_dist: 30
+max_kf_dist: 15
 
 d_mask: 1
 n_layer: 6
@@ -45,3 +45,4 @@ weight_pos: 2.0
 weight_phase: 0.5
 weight_traj: 0.5
 weight_contact: 0.1
+weight_score: 1.0

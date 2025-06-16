@@ -63,10 +63,11 @@ def split_features(motions: list[agl.Motion], phase_latents, window_length, wind
     # split features
     local_quats, root_pos, phases = [], [], []
     phase_from = 0
+    fps_int = int(fps)  # Convert fps to integer for slicing
     for motion in tqdm(motions, desc="Splitting motions", leave=False):
         # local quaternions and root position
         lqs, rp = [], []
-        for pose in motion.poses[fps:-fps]:
+        for pose in motion.poses[fps_int:-fps_int]:
             lqs.append(pose.local_quats)
             rp.append(pose.root_pos)
 
@@ -74,15 +75,15 @@ def split_features(motions: list[agl.Motion], phase_latents, window_length, wind
         rp = np.stack(rp, axis=0)
 
         # phase latents
-        phase = phase_latents[phase_from:phase_from + motion.num_frames - fps*2]
+        phase = phase_latents[phase_from:phase_from + motion.num_frames - fps_int*2]
 
         # split
-        for i in range(0, motion.num_frames - fps*2 - window_length + 1, window_offset):
+        for i in range(0, motion.num_frames - fps_int*2 - window_length + 1, window_offset):
             local_quats.append(lqs[i:i+window_length])
             root_pos.append(rp[i:i+window_length])
             phases.append(phase[i:i+window_length])
         
-        phase_from += motion.num_frames - fps*2
+        phase_from += motion.num_frames - fps_int*2
     
     if phase_from != phase_latents.shape[0]:
         raise ValueError(f"phase_from != phase_latents.shape[0] ({phase_from} != {phase_latents.shape[0]})")
@@ -269,17 +270,22 @@ def get_keyframe_scores(local_quats, root_pos, skeleton, context_frames):
 
 def get_motion_features(local_quats, root_pos):
     B, T, J, _ = local_quats.shape
+    print(f"Computing features for {B} sequences, each with {T} frames and {J} joints...")
 
     # motion features
+    print("  Converting quaternions to ortho6d representation...")
     local_ortho6ds = trf.n_quat.to_ortho6d(local_quats) # (B, T, J, 6)
     local_ortho6ds = local_ortho6ds.reshape(B, T, -1) # (B, T, J*6)
+    print("  Concatenating motion features...")
     motion_features = np.concatenate([local_ortho6ds, root_pos], axis=-1) # (B, T, J*6+3)
     
     # basis position
+    print("  Computing basis positions...")
     basis_pos = root_pos * np.array([1, 0, 1], dtype=np.float32) # (B, T, 3)
     basis_pos = basis_pos[..., (0, 2)] # xz only
 
     # basis direction
+    print("  Computing forward directions...")
     root_fwd = trf.n_quat.mul_vec(local_quats[:, :, 0], np.array([0, 0, 1], dtype=np.float32)) # (B, T, 3)
     root_fwd = root_fwd * np.array([1, 0, 1], dtype=np.float32)
     root_fwd = root_fwd / (np.linalg.norm(root_fwd, axis=-1, keepdims=True) + 1e-8) # (B, T, 3)
@@ -287,20 +293,43 @@ def get_motion_features(local_quats, root_pos):
     basis_dir = root_fwd[..., (0, 2)] # xz only
 
     # traj features
-    traj_features = np.concatenate([basis_pos, basis_dir], axis=-1) # (B, T, 3)
-
+    print("  Concatenating trajectory features...")
+    traj_features = np.concatenate([basis_pos, basis_dir], axis=-1) # (B, T, 4)
+    
+    print(f"Features computed successfully. Motion shape: {motion_features.shape}, Trajectory shape: {traj_features.shape}")
     return motion_features, traj_features
 
 def preprocess(config, dataset, train=True):
+    print(f"Starting preprocessing for {dataset} ({'train' if train else 'test'})...")
     # load phase variables
+    print("Loading phase variables...")
     phases = load_phase(train, dataset)
+    print("Phase variables loaded successfully")
 
     # load motions
     if dataset == "lafan1":
         fbx_path = os.path.join(config.dataset_dir, "train.fbx" if train else "test.fbx")
+        # Check if file exists
+        if not os.path.exists(fbx_path):
+            # Try looking in fbx-dataset subdirectory
+            alt_fbx_path = os.path.join("dataset/fbx-dataset/lafan1", "train.fbx" if train else "test.fbx")
+            if os.path.exists(alt_fbx_path):
+                print(f"File not found at {fbx_path}, using alternative path: {alt_fbx_path}")
+                fbx_path = alt_fbx_path
+            else:
+                print(f"Error: FBX file not found at either {fbx_path} or {alt_fbx_path}")
+        
+        print(f"Loading FBX file from: {fbx_path}")
+        print("Creating FBX object...")
         fbx = agl.FBX(fbx_path)
+        print("Getting motions... (this may take some time)")
         motions = fbx.motions()
+        print(f"Successfully loaded {len(motions)} motion sequences")
+        print("Getting skeleton...")
         skeleton = fbx.skeleton()
+        print("Getting fps...")
+        fps = fbx.fps()  # Get fps from FBX file
+        print(f"FPS: {fps}")
 
     elif dataset == "100style":
         dataset_dir = os.path.join(config.dataset_dir, "train" if train else "test")
@@ -323,17 +352,59 @@ def preprocess(config, dataset, train=True):
         raise ValueError(f"Invalid dataset: {dataset}")
     
     # get features
+    print("Splitting features...")
     local_quats, root_pos, phases = split_features(motions, phases, config.window_length, config.window_offset, fps=fps)
+    print("Aligning features...")
     local_quats, root_pos = align_features(local_quats, root_pos, config.context_frames)
+    print("Using default keyframe scores...")
     # kf_scores = get_keyframe_scores(local_quats, root_pos, skeleton, config.context_frames)
     kf_scores = np.ones((local_quats.shape[0], local_quats.shape[1], 1), dtype=np.float32)
+    print("Computing motion features...")
     motion_features, traj_features = get_motion_features(local_quats, root_pos)
 
-    # save
+    # save with simple progress reporting
+    print("Saving preprocessed features...")
     save_dir = os.path.join(config.dataset_dir, "MIB")
     os.makedirs(save_dir, exist_ok=True)
-    np.savez_compressed(os.path.join(save_dir, f"{'train' if train else 'test'}-{config.npz_path}"), motion=motion_features, phase=phases, traj=traj_features, scores=kf_scores)
+    save_path = os.path.join(save_dir, f"{'train' if train else 'test'}-{config.npz_path}")
+    
+    # Calculate total size
+    motion_size_mb = motion_features.nbytes / (1024 * 1024)
+    phase_size_mb = phases.nbytes / (1024 * 1024)
+    traj_size_mb = traj_features.nbytes / (1024 * 1024)
+    scores_size_mb = kf_scores.nbytes / (1024 * 1024)
+    total_size_mb = motion_size_mb + phase_size_mb + traj_size_mb + scores_size_mb
+    
+    print(f"Total data size: {total_size_mb:.2f} MB")
+    print(f"  - motion: {motion_size_mb:.2f} MB, shape: {motion_features.shape}")
+    print(f"  - phase: {phase_size_mb:.2f} MB, shape: {phases.shape}")
+    print(f"  - traj: {traj_size_mb:.2f} MB, shape: {traj_features.shape}")
+    print(f"  - scores: {scores_size_mb:.2f} MB, shape: {kf_scores.shape}")
+    
+    print(f"Saving to {save_path}...")
+    print("This may take several minutes. Please be patient...")
+    
+    import time
+    start_time = time.time()
+    try:
+        # For large datasets, save without compression first as a fallback
+        if total_size_mb > 1000:  # If more than 1GB
+            print("Large dataset detected. First saving without compression as backup...")
+            backup_path = save_path.replace('.npz', '_uncompressed.npz')
+            np.savez(backup_path, motion=motion_features, phase=phases, traj=traj_features, scores=kf_scores)
+            print(f"Backup saved to {backup_path}")
+            
+        # Now try with compression
+        print("Saving compressed version (this will take longer)...")
+        np.savez_compressed(save_path, motion=motion_features, phase=phases, traj=traj_features, scores=kf_scores)
+        elapsed = time.time() - start_time
+        print(f"Save completed in {elapsed:.2f} seconds")
+    except Exception as e:
+        print(f"Error during save: {e}")
+        import traceback
+        traceback.print_exc()
     print(f"> Saved {'train' if train else 'test'} dataset (motion: {motion_features.shape}, phase: {phases.shape}, traj: {traj_features.shape}, scores: {kf_scores.shape})")
+    print("Preprocessing completed successfully!")
 
     # # save skeleton
     # if train:

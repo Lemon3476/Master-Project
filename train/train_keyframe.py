@@ -24,9 +24,10 @@ if __name__ =="__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, required=True)
     parser.add_argument("--config", type=str, default="conv_kf.yaml")
+    parser.add_argument("--gpu", type=int, default=0, help="GPU device ID to use")
     args = parser.parse_args()
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(f"cuda:{args.gpu}" if torch.cuda.is_available() else "cpu")
     config = utils.load_config(f"config/{args.dataset}/{args.config}")
     utils.seed()
 
@@ -62,6 +63,9 @@ if __name__ =="__main__":
         loss_dict["traj"] = 0.0
     if config.use_score:
         loss_dict["score"] = 0.0
+    if config.get("use_dynamic_loss_weighting", False):
+        loss_dict["pose_weight"] = 0.0
+        loss_dict["traj_weight"] = 0.0
 
     # function for each iteration
     def train_iter(batch, train=True):
@@ -119,31 +123,66 @@ if __name__ =="__main__":
         pred_local_ortho6ds = pred_local_ortho6ds.reshape(B, T, skeleton.num_joints, 6)
         _, pred_global_positions = trf.t_ortho6d.fk(pred_local_ortho6ds, pred_root_pos, skeleton)
 
-        # loss
-        loss_rot    = loss.rot_loss(pred_local_ortho6ds, GT_local_ortho6ds, config.context_frames)
-        loss_pos    = loss.pos_loss(pred_global_positions, GT_global_positions, config.context_frames)
-        loss_total  = config.weight_rot * loss_rot + \
-                        config.weight_pos * loss_pos
-
+        # individual loss components
+        loss_rot = loss.rot_loss(pred_local_ortho6ds, GT_local_ortho6ds, config.context_frames)
+        loss_pos = loss.pos_loss(pred_global_positions, GT_global_positions, config.context_frames)
+        
         loss_dict["rot"] += loss_rot.item()
         loss_dict["pos"] += loss_pos.item()
 
         if config.use_phase:
             loss_phase = loss.phase_loss(pred_phase, GT_phase, config.context_frames)
-            loss_total += config.weight_phase * loss_phase
             loss_dict["phase"] += loss_phase.item()
+        else:
+            loss_phase = torch.tensor(0.0, device=device)
 
         if config.use_traj:
             GT_traj = GT_traj * traj_std + traj_mean
             pred_traj = ops.motion_to_traj(pred_motion)
             loss_traj = loss.traj_loss(pred_traj, GT_traj, config.context_frames)
-            loss_total += config.weight_traj * loss_traj
             loss_dict["traj"] += loss_traj.item()
+        else:
+            loss_traj = torch.tensor(0.0, device=device)
         
         if config.use_score:
             loss_score = loss.score_loss(pred_score, GT_score, config.context_frames)
-            loss_total += config.weight_score * loss_score
             loss_dict["score"] += loss_score.item()
+        else:
+            loss_score = torch.tensor(0.0, device=device)
+
+        # Dynamic loss weighting or static loss weighting
+        if config.get("use_dynamic_loss_weighting", False) and config.use_traj:
+            # Group losses into pose-related and trajectory-related
+            loss_pose_group = (config.weight_rot * loss_rot + 
+                              config.weight_pos * loss_pos + 
+                              (config.weight_phase * loss_phase if config.use_phase else 0) + 
+                              (config.weight_score * loss_score if config.use_score else 0))
+            
+            loss_traj_group = config.weight_traj * loss_traj
+            
+            # Compute dynamic weighting factor
+            epsilon = 1e-8
+            alpha = loss_traj_group.detach() / (loss_traj_group.detach() + loss_pose_group.detach() + epsilon)
+            
+            # Apply dynamic weighting
+            loss_total = (1 - alpha) * loss_pose_group + alpha * loss_traj_group
+            
+            # Log weights for monitoring
+            loss_dict["pose_weight"] += (1 - alpha).item()
+            loss_dict["traj_weight"] += alpha.item()
+        else:
+            # Traditional static weighting
+            loss_total = (config.weight_rot * loss_rot + 
+                         config.weight_pos * loss_pos)
+            
+            if config.use_phase:
+                loss_total += config.weight_phase * loss_phase
+                
+            if config.use_traj:
+                loss_total += config.weight_traj * loss_traj
+                
+            if config.use_score:
+                loss_total += config.weight_score * loss_score
 
         loss_dict["total"] += loss_total.item()
         
@@ -183,5 +222,6 @@ if __name__ =="__main__":
             utils.save_ckpt(model, optimizer, epoch, config, scheduler=scheduler)
 
     # save checkpoint - last epoch
+    epoch = config.epochs  # Define epoch variable for final checkpoint
     utils.save_ckpt(model, optimizer, epoch, config, scheduler=scheduler)
     print(f"Training finished in {(time.perf_counter() - start_time) / 60:.2f} min")

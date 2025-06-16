@@ -4,8 +4,12 @@ import os
 import time
 import numpy as np
 from tqdm import tqdm
-import matplotlib.pyplot as plt
 import argparse
+
+# Set matplotlib backend to non-GUI backend to avoid Qt errors
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
