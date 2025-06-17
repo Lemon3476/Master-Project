@@ -8,31 +8,23 @@ context_frames: 10
 use_phase: true
 use_traj: true
 use_score: true
-decoupled_traj_encoder: true     # Enable decoupled trajectory encoder
-decoupled_phase_encoder: true    # Enable decoupled phase encoder
-decoupled_traj_decoder: true     # Enable decoupled trajectory decoder
-traj_guidance_scale: 1.0
-phase_guidance_scale: 1.0
+decoupled_traj_encoder: true      # 启用独立的轨迹编码器
+decoupled_phase_encoder: true     # 启用独立的相位编码器
+decoupled_traj_decoder: true      # 启用独立的轨迹解码器
 # ---
 
-save_dir: "save/lafan1/KeyframeNet-DecoupledEncDec"
+save_dir: "save/lafan1/KeyframeNet-d-enc-dec"
 save_interval: 50
 val_interval: 10
 
 batch_size: 64
-epochs: 1000
+epochs: 500
 warmup_iters: 8000
 
-
-min_trans: 5
+min_trans: 10
 max_trans: 90
-contact_joints: [ "mixamorig:LeftFoot", "mixamorig:LeftToeBase", "mixamorig:RightFoot", "mixamorig:RightToeBase" ]
-contact_threshold: 1e-4
 midway_amount: 0.1
 midway_prob: 0.5
-min_kf_dist: 5
-max_kf_dist: 15
-
 d_mask: 1
 n_layer: 6
 n_head: 8
@@ -47,8 +39,7 @@ pre_lnorm: true
 atten_bias: false
 
 weight_rot: 1.0
-weight_pos: 2.0
+weight_pos: 1.0
 weight_phase: 0.5
 weight_traj: 0.5
-weight_contact: 0.1
 weight_score: 1.0

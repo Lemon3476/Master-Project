@@ -39,11 +39,7 @@ class ContextTransformer(nn.Module):
             # Determine main encoder input dimensions
             main_input_dim = self.d_motion + self.config.d_mask
             
-            # If using phase but NOT decoupled phase encoder, add phase dim to main encoder
-            if self.use_phase and not self.decoupled_phase_encoder:
-                main_input_dim += self.d_phase
-            
-            # 1. Main Encoder (processes motion, mask, and potentially phase)
+            # 1. Main Encoder (always processes motion and mask)
             self.pose_encoder = nn.Sequential(
                 nn.Linear(main_input_dim, self.config.d_encoder_h),
                 nn.PReLU(),
@@ -252,14 +248,6 @@ class ContextTransformer(nn.Module):
         if self.decoupled_encoders or self.decoupled_traj_encoder or self.decoupled_phase_encoder:
             # 1. Main motion encoder with mask
             main_input = torch.cat([motion * data_mask, data_mask], dim=-1)
-            
-            # Add phase to main input if using phase but NOT decoupled phase encoder
-            if self.use_phase and phase is not None and not self.decoupled_phase_encoder:
-                # 在方案一中，phase不被解耦，因此与motion一起输入
-                masked_phase = phase * data_mask
-                main_input = torch.cat([main_input, masked_phase], dim=-1)
-            
-            # Process main input
             motion_embedding = self.pose_encoder(main_input)
             
             # Initialize transformer input with motion embedding
@@ -317,15 +305,10 @@ class ContextTransformer(nn.Module):
         else:
             predicted_traj = None
             
-        # Create spatio-temporal gating signal
+        # 3. Create gating signal - ONLY use phase for gating
         if self.use_phase and predicted_phase is not None:
-            if self.use_traj and self.decoupled_traj_decoder and predicted_traj is not None:
-                # Enhanced spatio-temporal gating: concatenate phase and trajectory
-                gating_input = torch.cat([predicted_phase, predicted_traj], dim=-1)
-                expert_weights = self.gating(gating_input)
-            else:
-                # Fall back to phase-only gating if no trajectory available
-                expert_weights = self.gating(predicted_phase)
+            # Phase-only gating for MoE control
+            expert_weights = self.gating(predicted_phase)
                 
             # 4. Final Motion Generation with MoE - from transformer output zL
             motion_x = zL  # Use transformer output for motion decoding
@@ -406,11 +389,7 @@ class DetailTransformer(nn.Module):
             # Determine main encoder input dimensions
             main_input_dim = self.d_motion + self.config.d_mask
             
-            # If using phase but NOT decoupled phase encoder, add phase dim to main encoder
-            if self.use_phase and not self.decoupled_phase_encoder:
-                main_input_dim += self.d_phase
-            
-            # 1. Main Encoder (processes motion, mask, and potentially phase)
+            # 1. Main Encoder (always processes motion and mask)
             self.pose_encoder = nn.Sequential(
                 nn.Linear(main_input_dim, self.config.d_encoder_h),
                 nn.PReLU(),
@@ -601,33 +580,15 @@ class DetailTransformer(nn.Module):
         if self.use_phase and phase is not None:
             phase_in = phase
 
-        # Encode inputs with decoupled encoders
+        # Encode inputs
         if self.decoupled_encoders or self.decoupled_traj_encoder or self.decoupled_phase_encoder:
-            # 1. Main motion encoder with mask
+            # Prepare main input
             main_input = torch.cat([motion, data_mask], dim=-1)
+            x = self.pose_encoder(main_input)
             
-            # Add phase to main input if using phase but NOT decoupled phase encoder
-            if self.use_phase and phase is not None and not self.decoupled_phase_encoder:
-                # 在方案一中，phase不被解耦，因此与motion一起输入
-                main_input = torch.cat([main_input, phase], dim=-1)
-            
-            # Process main input
-            motion_embedding = self.pose_encoder(main_input)
-            
-            # Initialize transformer input with motion embedding
-            x = motion_embedding
-            
-            # 2. Add phase embedding if using decoupled phase encoder
-            if self.use_phase and phase is not None and self.decoupled_phase_encoder:
-                # Apply mask for known/unknown frames
-                phase_embedding = self.phase_encoder(phase)
-                # Add phase embedding
-                x = x + phase_embedding
-            
-            # 3. Add trajectory embedding if using decoupled trajectory encoder
+            # Add trajectory embedding if using decoupled trajectory encoder
             if self.use_traj and traj is not None and (self.decoupled_encoders or self.decoupled_traj_encoder):
                 traj_embedding = self.traj_encoder(traj)
-                # Add trajectory embedding
                 x = x + traj_embedding
         else:
             # Original unified encoding
@@ -673,15 +634,10 @@ class DetailTransformer(nn.Module):
         else:
             predicted_traj = None
             
-        # Create spatio-temporal gating signal
+        # 3. Create gating signal - ONLY use phase for gating
         if self.use_phase and predicted_phase is not None:
-            if self.use_traj and self.decoupled_traj_decoder and predicted_traj is not None:
-                # Enhanced spatio-temporal gating: concatenate phase and trajectory
-                gating_input = torch.cat([predicted_phase, predicted_traj], dim=-1)
-                expert_weights = self.gating(gating_input)
-            else:
-                # Fall back to phase-only gating if no trajectory available
-                expert_weights = self.gating(predicted_phase)
+            # Phase-only gating for MoE control
+            expert_weights = self.gating(predicted_phase)
                 
             # 4. Final Motion Generation with MoE - from transformer output zL
             motion_x = zL  # Use transformer output for motion decoding
