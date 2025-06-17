@@ -138,9 +138,19 @@ if __name__ =="__main__":
 
         if config.use_traj:
             GT_traj = GT_traj * traj_std + traj_mean
-            pred_traj = ops.motion_to_traj(pred_motion)
-            loss_traj = loss.traj_loss(pred_traj, GT_traj, config.context_frames)
-            loss_dict["traj"] += loss_traj.item()
+            
+            # Handle trajectory loss based on decoder configuration
+            if config.get("decoupled_traj_decoder", False) and "traj" in ctx_out:
+                # New behavior: Use direct trajectory output from decoder
+                # Denormalize the predicted trajectory
+                pred_traj_from_decoder = ctx_out["traj"] * traj_std + traj_mean
+                loss_traj = loss.traj_loss(pred_traj_from_decoder, GT_traj, config.context_frames)
+                loss_dict["traj"] += loss_traj.item()
+            else:
+                # Original behavior: Derive trajectory from motion
+                pred_traj = ops.motion_to_traj(pred_motion)
+                loss_traj = loss.traj_loss(pred_traj, GT_traj, config.context_frames)
+                loss_dict["traj"] += loss_traj.item()
         else:
             loss_traj = torch.tensor(0.0, device=device)
         

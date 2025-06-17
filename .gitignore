@@ -5,6 +5,7 @@ _*.py
 
 eval/qual
 dataset/*
+output/*
 
 save
 qual-results

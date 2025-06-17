@@ -256,7 +256,13 @@ if __name__ =="__main__":
             
             # Concatenate this method's results
             if method_motion_list:
-                print(f"Method {method_idx} ({results['tags'][method_idx]}): {len(method_motion_list)} motion samples")
+                # 首先，将所有批次拼接成一个大张量
+                concatenated_motions = torch.cat(method_motion_list, dim=0)
+                
+                # 然后，打印这个大张量的长度（即样本总数）
+                print(f"Method {method_idx} ({results['tags'][method_idx]}): {len(concatenated_motions)} motion samples")
+                
+                method_motions.append(concatenated_motions)
                 try:
                     method_motions.append(torch.cat(method_motion_list, dim=0))
                     method_contacts.append(torch.cat(method_contact_list, dim=0))

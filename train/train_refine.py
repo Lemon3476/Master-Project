@@ -281,9 +281,26 @@ if __name__ =="__main__":
         # Trajectory loss
         if config.use_traj:
             GT_traj = GT_traj * traj_std + traj_mean
-            pred_det_traj = ops.motion_to_traj(pred_det_motion)
-            loss_traj = loss.traj_loss(pred_det_traj, GT_traj, config.context_frames)
-            loss_dict["traj"] += loss_traj.item()
+            
+            # Handle trajectory loss based on decoder configuration
+            if config.get("decoupled_traj_decoder", False) and "traj" in det_out:
+                # New behavior: Use direct trajectory output from decoder
+                # Denormalize the predicted trajectory and apply appropriate masking
+                pred_traj_from_decoder = det_out["traj"].clone().detach()
+                pred_traj_from_decoder = pred_traj_from_decoder * traj_std + traj_mean
+                
+                # Restore constrained frames like we do for motion
+                pred_det_traj = GT_traj.clone().detach()
+                pred_det_traj[:, config.context_frames:-1] = pred_traj_from_decoder[:, config.context_frames:-1]
+                
+                # Calculate loss on the reconstructed trajectory
+                loss_traj = loss.traj_loss(pred_det_traj, GT_traj, config.context_frames)
+                loss_dict["traj"] += loss_traj.item()
+            else:
+                # Original behavior: Derive trajectory from motion
+                pred_det_traj = ops.motion_to_traj(pred_det_motion)
+                loss_traj = loss.traj_loss(pred_det_traj, GT_traj, config.context_frames)
+                loss_dict["traj"] += loss_traj.item()
         else:
             loss_traj = torch.tensor(0.0, device=device)
 

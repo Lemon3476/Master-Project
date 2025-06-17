@@ -4,22 +4,25 @@ window_length: 101
 window_offset: 20
 context_frames: 10
 
+# --- Key Architectural Flags ---
 use_phase: true
 use_traj: true
 use_score: true
-decoupled_encoders: true           # Activate dual-encoder architecture
-use_dynamic_loss_weighting: true   # Activate dynamic loss weighting
-use_foot_consistency: true         # Activate foot consistency loss
-traj_guidance_scale: 1.0           # Trajectory guidance strength
+decoupled_traj_encoder: true     # Enable decoupled trajectory encoder
+decoupled_phase_encoder: true    # Enable decoupled phase encoder
+decoupled_traj_decoder: true     # Enable decoupled trajectory decoder
+traj_guidance_scale: 1.0
+phase_guidance_scale: 1.0
+# ---
 
-name: "refine-traj-encoder-dynamic-loss-foot-consistency"
-save_dir: "save/lafan1/RefineNet-TrajEncoder-DynamicLoss-FootConsistency"
+save_dir: "save/lafan1/KeyframeNet-DecoupledEncDec"
 save_interval: 50
 val_interval: 10
 
 batch_size: 64
 epochs: 1000
 warmup_iters: 8000
+
 
 min_trans: 5
 max_trans: 90
@@ -42,7 +45,6 @@ d_gating_h: 512
 dropout: 0.0
 pre_lnorm: true
 atten_bias: false
-residual: true
 
 weight_rot: 1.0
 weight_pos: 2.0
@@ -50,4 +52,3 @@ weight_phase: 0.5
 weight_traj: 0.5
 weight_contact: 0.1
 weight_score: 1.0
-weight_foot_consistency: 0.05      # Weight for foot consistency loss
