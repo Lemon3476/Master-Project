@@ -1,28 +1,21 @@
 dataset_dir: "dataset/lafan1"
-
 window_length: 101
 window_offset: 20
 context_frames: 10
-
-# --- Key Architectural Flags ---
 use_phase: true
 use_traj: true
 use_score: true
-decoupled_traj_encoder: true      # 启用独立的轨迹编码器
-decoupled_phase_encoder: true     # 启用独立的相位编码器
-decoupled_traj_decoder: true      # 启用独立的轨迹解码器
-use_foot_consistency: true        # 启用足部一致性损失
-# ---
-
+decoupled_phase_encoder: true
+decoupled_traj_encoder: true
+decoupled_traj_decoder: true
+combined_gating: true
+use_foot_consistency: true
 save_dir: "save/lafan1/RefineNet-d-enc-dec-fc"
 save_interval: 50
 val_interval: 10
-
 batch_size: 64
 epochs: 1000
 warmup_iters: 8000
-
-
 min_trans: 5
 max_trans: 90
 contact_joints: [ "mixamorig:LeftFoot", "mixamorig:LeftToeBase", "mixamorig:RightFoot", "mixamorig:RightToeBase" ]
@@ -31,7 +24,6 @@ midway_amount: 0.1
 midway_prob: 0.5
 min_kf_dist: 5
 max_kf_dist: 15
-
 d_mask: 1
 n_layer: 6
 n_head: 8
@@ -45,11 +37,10 @@ dropout: 0.0
 pre_lnorm: true
 atten_bias: false
 residual: true
-
 weight_rot: 1.0
 weight_pos: 2.0
 weight_phase: 0.5
 weight_traj: 0.5
 weight_contact: 0.1
 weight_score: 1.0
-weight_foot_consistency: 0.1     # 足部一致性损失权重
+weight_foot_consistency: 0.1

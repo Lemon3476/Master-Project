@@ -16,7 +16,6 @@ class ContextTransformer(nn.Module):
         self.use_phase = config.use_phase
         self.use_traj  = config.use_traj
         self.use_score = config.use_score
-        self.decoupled_encoders = config.get("decoupled_encoders", False)
         self.decoupled_traj_encoder = config.get("decoupled_traj_encoder", False)
         self.decoupled_phase_encoder = config.get("decoupled_phase_encoder", False)
         self.decoupled_traj_decoder = config.get("decoupled_traj_decoder", False)
@@ -35,17 +34,17 @@ class ContextTransformer(nn.Module):
         self.n_layer = config.n_layer
 
         # network modules
-        if self.decoupled_encoders or self.decoupled_traj_encoder or self.decoupled_phase_encoder:
-            # Determine main encoder input dimensions
-            main_input_dim = self.d_motion + self.config.d_mask
+        # Determine encoder architecture based on configuration
+        if self.decoupled_traj_encoder or self.decoupled_phase_encoder:
+            # Decoupled encoders architecture
+            # 1. Pose+Mask Encoder (always present)
+            pose_input_dim = self.d_motion + self.config.d_mask
+            if not self.decoupled_phase_encoder and self.use_phase:
+                # Include phase in pose encoder if phase is not decoupled
+                pose_input_dim += self.d_phase
             
-            # If using phase but NOT decoupled phase encoder, add phase dim to main encoder
-            if self.use_phase and not self.decoupled_phase_encoder:
-                main_input_dim += self.d_phase
-            
-            # 1. Main Encoder (processes motion, mask, and potentially phase)
             self.pose_encoder = nn.Sequential(
-                nn.Linear(main_input_dim, self.config.d_encoder_h),
+                nn.Linear(pose_input_dim, self.config.d_encoder_h),
                 nn.PReLU(),
                 nn.Dropout(self.dropout),
                 nn.Linear(self.config.d_encoder_h, self.config.d_model),
@@ -53,21 +52,21 @@ class ContextTransformer(nn.Module):
                 nn.Dropout(self.dropout)
             )
             
-            # 2. Trajectory Encoder (optional)
-            if self.use_traj and (self.decoupled_encoders or self.decoupled_traj_encoder):
-                self.traj_encoder = nn.Sequential(
-                    nn.Linear(self.d_traj, self.config.d_encoder_h),
+            # 2. Phase Encoder (if decoupled)
+            if self.decoupled_phase_encoder and self.use_phase:
+                self.phase_encoder = nn.Sequential(
+                    nn.Linear(self.d_phase, self.config.d_encoder_h),
                     nn.PReLU(),
                     nn.Dropout(self.dropout),
                     nn.Linear(self.config.d_encoder_h, self.config.d_model),
                     nn.PReLU(),
                     nn.Dropout(self.dropout)
                 )
-                
-            # 3. Phase Encoder (optional)
-            if self.use_phase and self.decoupled_phase_encoder:
-                self.phase_encoder = nn.Sequential(
-                    nn.Linear(self.d_phase, self.config.d_encoder_h),
+            
+            # 3. Trajectory Encoder (if decoupled)
+            if self.decoupled_traj_encoder and self.use_traj:
+                self.traj_encoder = nn.Sequential(
+                    nn.Linear(self.d_traj, self.config.d_encoder_h),
                     nn.PReLU(),
                     nn.Dropout(self.dropout),
                     nn.Linear(self.config.d_encoder_h, self.config.d_model),
@@ -85,30 +84,18 @@ class ContextTransformer(nn.Module):
                 nn.Dropout(self.dropout)
             )
 
-        # Phase decoder
+        # Decoders
         if self.use_phase:
+            # phase decoder
             self.phase_decoder = nn.Sequential(
                 nn.Linear(self.config.d_model, self.config.d_decoder_h),
                 nn.PReLU(),
                 nn.Linear(self.config.d_decoder_h, self.d_phase)
             )
-        
-        # Trajectory decoder (optional)
-        if self.use_traj and self.decoupled_traj_decoder:
-            self.traj_decoder = nn.Sequential(
-                nn.Linear(self.config.d_model, self.config.d_decoder_h),
-                nn.PReLU(),
-                nn.Linear(self.config.d_decoder_h, self.d_traj)
-            )
 
-        # Gating Network - only uses phase as input (方案三)
-        if self.use_phase:
-            # 方案三: Always use only phase for gating, even if traj decoder is available
-            gating_input_dim = self.d_phase
-            
-            # Create phase-only gating network
+            # gating network
             self.gating = nn.Sequential(
-                nn.Linear(gating_input_dim, self.config.d_gating_h),
+                nn.Linear(self.d_phase, self.config.d_gating_h),
                 nn.PReLU(),
                 nn.Dropout(self.dropout),
                 nn.Linear(self.config.d_gating_h, self.config.d_gating_h),
@@ -132,6 +119,28 @@ class ContextTransformer(nn.Module):
                 nn.PReLU(),
                 nn.Linear(self.config.d_decoder_h, self.d_motion + self.d_score)
             )
+            
+        # Trajectory decoder (if configured)
+        if self.use_traj and self.decoupled_traj_decoder:
+            self.traj_decoder = nn.Sequential(
+                nn.Linear(self.config.d_model, self.config.d_decoder_h),
+                nn.PReLU(),
+                nn.Linear(self.config.d_decoder_h, self.d_traj)
+            )
+            
+            # Combined gating network for phase and trajectory (if needed)
+            if self.use_phase and self.config.get("combined_gating", False):
+                combined_input_dim = self.d_phase + self.d_traj
+                self.combined_gating = nn.Sequential(
+                    nn.Linear(combined_input_dim, self.config.d_gating_h),
+                    nn.PReLU(),
+                    nn.Dropout(self.dropout),
+                    nn.Linear(self.config.d_gating_h, self.config.d_gating_h),
+                    nn.PReLU(),
+                    nn.Dropout(self.dropout),
+                    nn.Linear(self.config.d_gating_h, self.num_experts),
+                    nn.Softmax(dim=-1)
+                )
 
         self.rel_pos_layer = nn.Sequential(
             nn.Linear(1, self.config.d_head),
@@ -161,6 +170,12 @@ class ContextTransformer(nn.Module):
                     pre_lnorm=self.config.pre_lnorm,
                     bias=self.config.atten_bias
                 )
+                # transformer.ConvBlockAttention(
+                #     d_model=self.config.d_model,
+                #     kernel_size=self.config.kernel_size,
+                #     dropout=self.config.dropout,
+                #     pre_lnorm=self.config.pre_lnorm,
+                # )
             )
 
             self.pff_layers.append(
@@ -244,36 +259,33 @@ class ContextTransformer(nn.Module):
         # position index relative to context and target frame
         keyframe_pos = self.get_keyframe_pos_indices(T).to(device)
 
-        # Encode inputs with decoupled encoders
-        if self.decoupled_encoders or self.decoupled_traj_encoder or self.decoupled_phase_encoder:
-            # 1. Main motion encoder with mask
-            main_input = torch.cat([motion * data_mask, data_mask], dim=-1)
+        # input processing based on encoder architecture
+        if self.decoupled_traj_encoder or self.decoupled_phase_encoder:
+            # Prepare pose+mask input
+            pose_input = torch.cat([motion * data_mask, data_mask], dim=-1)
             
-            # Add phase to main input if using phase but NOT decoupled phase encoder
+            # Add phase to pose input if phase is not decoupled
             if self.use_phase and phase is not None and not self.decoupled_phase_encoder:
-                # 在方案一中，phase不被解耦，因此与motion一起输入
-                masked_phase = phase * data_mask
-                main_input = torch.cat([main_input, masked_phase], dim=-1)
+                pose_input = torch.cat([pose_input, phase * data_mask], dim=-1)
             
-            # Process main input
-            motion_embedding = self.pose_encoder(main_input)
+            # Encode pose inputs
+            x = self.pose_encoder(pose_input)
             
-            # Initialize transformer input with motion embedding
-            x = motion_embedding
-            
-            # 2. Add phase embedding if using decoupled phase encoder
-            if self.use_phase and phase is not None and self.decoupled_phase_encoder:
-                # Apply mask to phase before encoding
-                masked_phase = phase * data_mask
-                phase_embedding = self.phase_encoder(masked_phase)
-                # Add phase embedding
+            # Encode phase separately if decoupled
+            if self.decoupled_phase_encoder and self.use_phase and phase is not None:
+                phase_embedding = self.phase_encoder(phase * data_mask)
+                # Feature fusion with phase embedding
                 x = x + phase_embedding
             
-            # 3. Add trajectory embedding if using decoupled trajectory encoder
-            if self.use_traj and traj is not None and (self.decoupled_encoders or self.decoupled_traj_encoder):
+            # Encode trajectory separately and apply soft guidance
+            if self.decoupled_traj_encoder and self.use_traj and traj is not None:
                 traj_embedding = self.traj_encoder(traj)
-                # Add trajectory embedding
-                x = x + traj_embedding
+                
+                # Apply trajectory guidance scale
+                guidance_scale = self.config.get("traj_guidance_scale", 1.0)
+                
+                # Feature fusion by addition with scaling
+                x = x + traj_embedding * guidance_scale
         else:
             # Original unified encoding
             x = torch.cat([motion * data_mask, data_mask], dim=-1)
@@ -298,68 +310,62 @@ class ContextTransformer(nn.Module):
         if self.pre_lnorm:
             x = self.layer_norm(x)
 
-        # Store transformer output for decoders
-        zL = x
-        
-        # Phase Decoding
+        # decoder
         if self.use_phase:
-            predicted_phase = self.phase_decoder(zL)
-        else:
-            predicted_phase = None
+            # phase decoder
+            phase = self.phase_decoder(x)
             
-        # Trajectory Decoding (if applicable)
+        # Trajectory decoder (if configured)
+        traj_out = None
         if self.use_traj and self.decoupled_traj_decoder:
-            predicted_traj = self.traj_decoder(zL)
-        else:
-            predicted_traj = None
+            traj_out = self.traj_decoder(x)
+
+        # Gating network (motion decoder)
+        if self.use_phase:
+            # Use phase for gating if available
+            expert_weights = self.gating(phase) # (B, T, num_experts)
             
-        # Create phase-only gating signal (方案三)
-        if self.use_phase and predicted_phase is not None:
-            # 方案三: Always use only phase for gating
-            expert_weights = self.gating(predicted_phase)
-                
-            # 4. Final Motion Generation with MoE - from transformer output zL
-            motion_x = zL  # Use transformer output for motion decoding
+            # For scheme B: If configured to use both phase and traj for gating
+            if self.use_traj and self.decoupled_traj_decoder and self.config.get("combined_gating", False):
+                # Use pre-defined combined gating network (initialized in __init__)
+                # Combine phase and traj for gating
+                combined_input = torch.cat([phase, traj_out], dim=-1)
+                expert_weights = self.combined_gating(combined_input)
+
+            # motion decoder
             for i in range(len(self.motion_decoder) // 2):
-                d_model = motion_x.shape[-1]
-                motion_x = motion_x.reshape(B*T, 1, d_model).transpose(0, 1)
-                motion_x = self.motion_decoder[i*2](motion_x)
-                motion_x = motion_x.transpose(0, 1).reshape(B, T, self.num_experts, -1)
-                motion_x = torch.sum(motion_x * expert_weights[..., None], dim=-2)
-                motion_x = self.motion_decoder[i*2+1](motion_x)
+                # x.shape == (B, T, d_model)
+                # weight.shape == (num_experts, d_model, d_out)
+
+                d_model = x.shape[-1]
+                x = x.reshape(B*T, 1, d_model).transpose(0, 1) # (1, B*T, d_model)
+                x = self.motion_decoder[i*2](x) # (num_experts, B*T, d_out)
+                x = x.transpose(0, 1).reshape(B, T, self.num_experts, -1)
+                x = torch.sum(x * expert_weights[..., None], dim=-2) # (B, T, d_out)
+                x = self.motion_decoder[i*2+1](x)
             
             # motion decoder - last layer
-            d_model = motion_x.shape[-1]
-            motion_x = motion_x.reshape(B*T, 1, d_model).transpose(0, 1)
-            motion_x = self.motion_decoder[-1](motion_x)
-            motion_x = motion_x.transpose(0, 1).reshape(B, T, self.num_experts, -1)
-            motion_x = torch.sum(motion_x * expert_weights[..., None], dim=-2)
-            
-            # Set output
-            x = motion_x
+            d_model = x.shape[-1]
+            x = x.reshape(B*T, 1, d_model).transpose(0, 1) # (1, B*T, d_model)
+            x = self.motion_decoder[-1](x) # (num_experts, B*T, d_out)
+            x = x.transpose(0, 1).reshape(B, T, self.num_experts, -1)
+            x = torch.sum(x * expert_weights[..., None], dim=-2)
         else:
-            # Non-phase case: use standard decoder
             x = self.decoder(x)
 
-        # 6. Prepare outputs
+        # output
         res = {
             "motion": x
         }
-        
-        # Add phase output if available
         if self.use_phase:
-            res["phase"] = predicted_phase
-            
-        # Add trajectory output if available
-        if self.use_traj and self.decoupled_traj_decoder:
-            res["traj"] = predicted_traj
-            
-        # Handle score if used
+            res["phase"] = phase
         if self.use_score:
             x, score = torch.split(x, [self.d_motion, self.d_score], dim=-1)
             score = torch.sigmoid(score)
             res["motion"] = x
             res["score"] = score
+        if self.use_traj and self.decoupled_traj_decoder:
+            res["traj"] = traj_out
 
         return res, midway_targets
 
@@ -373,7 +379,6 @@ class DetailTransformer(nn.Module):
         self.use_traj  = config.use_traj
         self.use_score = config.use_score
         self.use_kf_emb = config.get("use_kf_emb", False)
-        self.decoupled_encoders = config.get("decoupled_encoders", False)
         self.decoupled_traj_encoder = config.get("decoupled_traj_encoder", False)
         self.decoupled_phase_encoder = config.get("decoupled_phase_encoder", False)
         self.decoupled_traj_decoder = config.get("decoupled_traj_decoder", False)
@@ -393,17 +398,17 @@ class DetailTransformer(nn.Module):
         self.n_layer = config.n_layer
 
         # network modules
-        if self.decoupled_encoders or self.decoupled_traj_encoder or self.decoupled_phase_encoder:
-            # Determine main encoder input dimensions
-            main_input_dim = self.d_motion + self.config.d_mask
+        # Determine encoder architecture based on configuration
+        if self.decoupled_traj_encoder or self.decoupled_phase_encoder:
+            # Decoupled encoders architecture
+            # 1. Pose+Mask Encoder (always present)
+            pose_input_dim = self.d_motion + self.config.d_mask
+            if not self.decoupled_phase_encoder and self.use_phase:
+                # Include phase in pose encoder if phase is not decoupled
+                pose_input_dim += self.d_phase
             
-            # If using phase but NOT decoupled phase encoder, add phase dim to main encoder
-            if self.use_phase and not self.decoupled_phase_encoder:
-                main_input_dim += self.d_phase
-            
-            # 1. Main Encoder (processes motion, mask, and potentially phase)
             self.pose_encoder = nn.Sequential(
-                nn.Linear(main_input_dim, self.config.d_encoder_h),
+                nn.Linear(pose_input_dim, self.config.d_encoder_h),
                 nn.PReLU(),
                 nn.Dropout(self.dropout),
                 nn.Linear(self.config.d_encoder_h, self.config.d_model),
@@ -411,21 +416,21 @@ class DetailTransformer(nn.Module):
                 nn.Dropout(self.dropout)
             )
             
-            # 2. Trajectory Encoder (optional)
-            if self.use_traj and (self.decoupled_encoders or self.decoupled_traj_encoder):
-                self.traj_encoder = nn.Sequential(
-                    nn.Linear(self.d_traj, self.config.d_encoder_h),
+            # 2. Phase Encoder (if decoupled)
+            if self.decoupled_phase_encoder and self.use_phase:
+                self.phase_encoder = nn.Sequential(
+                    nn.Linear(self.d_phase, self.config.d_encoder_h),
                     nn.PReLU(),
                     nn.Dropout(self.dropout),
                     nn.Linear(self.config.d_encoder_h, self.config.d_model),
                     nn.PReLU(),
                     nn.Dropout(self.dropout)
                 )
-                
-            # 3. Phase Encoder (optional)
-            if self.use_phase and self.decoupled_phase_encoder:
-                self.phase_encoder = nn.Sequential(
-                    nn.Linear(self.d_phase, self.config.d_encoder_h),
+            
+            # 3. Trajectory Encoder (if decoupled)
+            if self.decoupled_traj_encoder and self.use_traj:
+                self.traj_encoder = nn.Sequential(
+                    nn.Linear(self.d_traj, self.config.d_encoder_h),
                     nn.PReLU(),
                     nn.Dropout(self.dropout),
                     nn.Linear(self.config.d_encoder_h, self.config.d_model),
@@ -452,30 +457,18 @@ class DetailTransformer(nn.Module):
                 nn.Dropout(self.dropout)
             )
 
-        # Phase decoder
+        # Decoders
         if self.use_phase:
+            # phase decoder
             self.phase_decoder = nn.Sequential(
                 nn.Linear(self.config.d_model, self.config.d_decoder_h),
                 nn.PReLU(),
                 nn.Linear(self.config.d_decoder_h, self.d_phase)
             )
-        
-        # Trajectory decoder (optional)
-        if self.use_traj and self.decoupled_traj_decoder:
-            self.traj_decoder = nn.Sequential(
-                nn.Linear(self.config.d_model, self.config.d_decoder_h),
-                nn.PReLU(),
-                nn.Linear(self.config.d_decoder_h, self.d_traj)
-            )
 
-        # Gating Network - only uses phase as input (方案三)
-        if self.use_phase:
-            # 方案三: Always use only phase for gating, even if traj decoder is available
-            gating_input_dim = self.d_phase
-            
-            # Create phase-only gating network
+            # gating network
             self.gating = nn.Sequential(
-                nn.Linear(gating_input_dim, self.config.d_gating_h),
+                nn.Linear(self.d_phase, self.config.d_gating_h),
                 nn.PReLU(),
                 nn.Dropout(self.dropout),
                 nn.Linear(self.config.d_gating_h, self.config.d_gating_h),
@@ -492,6 +485,27 @@ class DetailTransformer(nn.Module):
                 self.motion_decoder.append(multilinear.MultiLinear(self.num_experts, input_dim, self.config.d_decoder_h))
                 self.motion_decoder.append(nn.PReLU())
             self.motion_decoder.append(multilinear.MultiLinear(self.num_experts, self.config.d_decoder_h, self.d_motion + self.d_contact))
+
+        # Trajectory decoder (if configured)
+        if self.use_traj and self.decoupled_traj_decoder:
+            self.traj_decoder = nn.Sequential(
+                nn.Linear(self.config.d_model, self.config.d_decoder_h),
+                nn.PReLU(),
+                nn.Linear(self.config.d_decoder_h, self.d_traj)
+            )
+            
+            # Combined gating for phase and trajectory (Scheme B)
+            if self.use_phase and self.config.get("combined_gating", False):
+                self.combined_gating = nn.Sequential(
+                    nn.Linear(self.d_phase + self.d_traj, self.config.d_gating_h),
+                    nn.PReLU(),
+                    nn.Dropout(self.dropout),
+                    nn.Linear(self.config.d_gating_h, self.config.d_gating_h),
+                    nn.PReLU(),
+                    nn.Dropout(self.dropout),
+                    nn.Linear(self.config.d_gating_h, self.num_experts),
+                    nn.Softmax(dim=-1)
+                )
 
         else:
             self.decoder = nn.Sequential(
@@ -575,9 +589,6 @@ class DetailTransformer(nn.Module):
     def forward(self, motion, midway_targets, phase=None, traj=None, attention_mask=None):
         B, T, M = motion.shape
         device  = motion.device
-        # motion: (B, T, d_motion)
-        # phase:  (B, T, d_phase)
-        # traj:   (B, T, d_traj)
 
         # data mask
         data_mask = self.get_data_mask(T, midway_targets).to(device)
@@ -588,35 +599,33 @@ class DetailTransformer(nn.Module):
         if self.use_phase and phase is not None:
             phase_in = phase
 
-        # Encode inputs with decoupled encoders
-        if self.decoupled_encoders or self.decoupled_traj_encoder or self.decoupled_phase_encoder:
-            # 1. Main motion encoder with mask
-            main_input = torch.cat([motion, data_mask], dim=-1)
+        # Input processing based on encoder architecture
+        if self.decoupled_traj_encoder or self.decoupled_phase_encoder:
+            # Prepare pose+mask input
+            pose_input = torch.cat([motion, data_mask], dim=-1)
             
-            # Add phase to main input if using phase but NOT decoupled phase encoder
+            # Add phase to pose input if phase is not decoupled
             if self.use_phase and phase is not None and not self.decoupled_phase_encoder:
-                # 在方案一中，phase不被解耦，因此与motion一起输入
-                main_input = torch.cat([main_input, phase], dim=-1)
+                pose_input = torch.cat([pose_input, phase], dim=-1)
             
-            # Process main input
-            motion_embedding = self.pose_encoder(main_input)
+            # Encode pose inputs
+            x = self.pose_encoder(pose_input)
             
-            # Initialize transformer input with motion embedding
-            x = motion_embedding
-            
-            # 2. Add phase embedding if using decoupled phase encoder
-            if self.use_phase and phase is not None and self.decoupled_phase_encoder:
-                # Apply mask for known/unknown frames
-                masked_phase = phase * data_mask
-                phase_embedding = self.phase_encoder(masked_phase)
-                # Add phase embedding
+            # Encode phase separately if decoupled
+            if self.decoupled_phase_encoder and self.use_phase and phase is not None:
+                phase_embedding = self.phase_encoder(phase)
+                # Feature fusion with phase embedding
                 x = x + phase_embedding
             
-            # 3. Add trajectory embedding if using decoupled trajectory encoder
-            if self.use_traj and traj is not None and (self.decoupled_encoders or self.decoupled_traj_encoder):
+            # Encode trajectory separately and apply soft guidance
+            if self.decoupled_traj_encoder and self.use_traj and traj is not None:
                 traj_embedding = self.traj_encoder(traj)
-                # Add trajectory embedding
-                x = x + traj_embedding
+                
+                # Apply trajectory guidance scale
+                guidance_scale = self.config.get("traj_guidance_scale", 1.0)
+                
+                # Feature fusion by addition with scaling
+                x = x + traj_embedding * guidance_scale
         else:
             # Original unified encoding
             x = torch.cat([motion, data_mask], dim=-1)
@@ -644,71 +653,63 @@ class DetailTransformer(nn.Module):
         if self.pre_lnorm:
             x = self.layer_norm(x)
 
-        # Store transformer output for decoders
-        zL = x
-        
-        # Phase Decoding
+        # decoder
         if self.use_phase:
-            phase_out = self.phase_decoder(zL)
-            # Apply residual connection if configured
-            predicted_phase = phase_in + phase_out if self.config.residual else phase_out
-        else:
-            predicted_phase = None
+            # phase decoder - residual connection
+            phase_out = self.phase_decoder(x)
+            phase = phase_in + phase_out if self.config.residual else phase_out
             
-        # Trajectory Decoding (if applicable)
-        if self.use_traj and self.decoupled_traj_decoder:
-            predicted_traj = self.traj_decoder(zL)
-        else:
-            predicted_traj = None
-            
-        # Create phase-only gating signal (方案三)
-        if self.use_phase and predicted_phase is not None:
-            # 方案三: Always use only phase for gating
-            expert_weights = self.gating(predicted_phase)
-                
-            # 4. Final Motion Generation with MoE - from transformer output zL
-            motion_x = zL  # Use transformer output for motion decoding
+            # Trajectory decoder (if configured)
+            if self.use_traj and self.decoupled_traj_decoder:
+                traj_out = self.traj_decoder(x)
+                if self.config.get("residual", True) and traj is not None:
+                    traj_out = traj + traj_out
+
+            # gating - choose appropriate gating mechanism based on configuration
+            if self.use_traj and self.decoupled_traj_decoder and self.config.get("combined_gating", False):
+                # Combined gating using both phase and trajectory (Scheme B)
+                combined_input = torch.cat([phase, traj_out], dim=-1)
+                expert_weights = self.combined_gating(combined_input)  # (B, T, num_experts)
+            else:
+                # Default: use only phase for gating
+                expert_weights = self.gating(phase)  # (B, T, num_experts)
+
+            # motion decoder
             for i in range(len(self.motion_decoder) // 2):
-                d_model = motion_x.shape[-1]
-                motion_x = motion_x.reshape(B*T, 1, d_model).transpose(0, 1)
-                motion_x = self.motion_decoder[i*2](motion_x)
-                motion_x = motion_x.transpose(0, 1).reshape(B, T, self.num_experts, -1)
-                motion_x = torch.sum(motion_x * expert_weights[..., None], dim=-2)
-                motion_x = self.motion_decoder[i*2+1](motion_x)
+                # x.shape == (B, T, d_model)
+                # weight.shape == (num_experts, d_model, d_out)
+
+                d_model = x.shape[-1]
+                x = x.reshape(B*T, 1, d_model).transpose(0, 1) # (1, B*T, d_model)
+                x = self.motion_decoder[i*2](x) # (num_experts, B*T, d_out)
+                x = x.transpose(0, 1).reshape(B, T, self.num_experts, -1)
+                x = torch.sum(x * expert_weights[..., None], dim=-2) # (B, T, d_out)
+                x = self.motion_decoder[i*2+1](x) # activation
             
             # motion decoder - last layer
-            d_model = motion_x.shape[-1]
-            motion_x = motion_x.reshape(B*T, 1, d_model).transpose(0, 1)
-            motion_x = self.motion_decoder[-1](motion_x)
-            motion_x = motion_x.transpose(0, 1).reshape(B, T, self.num_experts, -1)
-            motion_x = torch.sum(motion_x * expert_weights[..., None], dim=-2)
-            
-            # Set output
-            x = motion_x
+            d_model = x.shape[-1]
+            x = x.reshape(B*T, 1, d_model).transpose(0, 1) # (1, B*T, d_model)
+            x = self.motion_decoder[-1](x) # (num_experts, B*T, d_out)
+            x = x.transpose(0, 1).reshape(B, T, self.num_experts, -1)
+            x = torch.sum(x * expert_weights[..., None], dim=-2)
         else:
-            # Non-phase case: use standard decoder
             x = self.decoder(x)
         
-        # Split motion and contact
+        # split motion and contact
         x, contact = torch.split(x, [M, 4], dim=-1)
         contact = torch.sigmoid(contact)
 
-        # Apply residual connection to motion if configured
         if self.config.residual:
             x = motion_in + x
 
-        # 6. Prepare outputs
+        # return dict
         res = {
             "motion": x,
             "contact": contact
         }
-        
-        # Add phase output if available
         if self.use_phase:
-            res["phase"] = predicted_phase
-            
-        # Add trajectory output if available
+            res["phase"] = phase
         if self.use_traj and self.decoupled_traj_decoder:
-            res["traj"] = predicted_traj
+            res["traj"] = traj_out
 
         return res

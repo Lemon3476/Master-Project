@@ -10,9 +10,6 @@ import argparse
 from aPyOpenGL import transforms as trf
 
 import torch
-# 启用TF32高精度以提高训练速度（仅在支持的GPU如A6000上生效）
-torch.set_float32_matmul_precision('high')
-
 from torch.optim import Adam
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
@@ -37,8 +34,7 @@ if __name__ =="__main__":
 
     # dataset
     dataset = MotionDataset(train=True, config=config)
-    # dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True, num_workers=8, pin_memory=True)
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True, num_workers=8)
     skeleton = dataset.skeleton
 
     mean, std = dataset.motion_statistics()
@@ -48,9 +44,7 @@ if __name__ =="__main__":
     traj_mean, traj_std = traj_mean.to(device), traj_std.to(device)
 
     val_dataset = MotionDataset(train=False, config=config)
-    # val_dataloader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=8, pin_memory=True)
-    val_dataloader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False)
-
+    val_dataloader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False, num_workers=8)
 
     contact_idx = []
     for joint in config.contact_joints:
@@ -61,7 +55,7 @@ if __name__ =="__main__":
     ctx_model = ContextTransformer(ctx_config, dataset).to(device)
     utils.load_model(ctx_model, ctx_config)
     ctx_model.eval()
-
+    # ctx_model = torch.compile(ctx_model)
 
     # model, optimizer, scheduler
     model = DetailTransformer(config, dataset).to(device)
@@ -69,7 +63,7 @@ if __name__ =="__main__":
     scheduler = NoamScheduler(optimizer, config.d_model, config.warmup_iters)
     init_epoch = utils.load_latest_ckpt(model, optimizer, config, scheduler=scheduler)
     epoch = init_epoch  # Initialize epoch variable
-
+    # model = torch.compile(model)
 
     # save and log
     os.makedirs(config.save_dir, exist_ok=True)
@@ -112,12 +106,10 @@ if __name__ =="__main__":
             GT_score = GT_score[:, :target_idx+1].to(device)
 
         B, T, M = GT_motion.shape
-        
-        # 分割和处理输入数据
         GT_local_ortho6ds, GT_root_pos = torch.split(GT_motion, [M-3, 3], dim=-1)
         GT_local_ortho6ds = GT_local_ortho6ds.reshape(B, T, skeleton.num_joints, 6)
         _, GT_global_positions = trf.t_ortho6d.fk(GT_local_ortho6ds, GT_root_pos, skeleton)
-        
+
         GT_foot_vel = GT_global_positions[:, 1:, contact_idx] - GT_global_positions[:, :-1, contact_idx]
         GT_foot_vel = torch.sum(GT_foot_vel ** 2, dim=-1) # (B, t-1, 4)
         GT_foot_vel = torch.cat([GT_foot_vel[:, 0:1], GT_foot_vel], dim=1) # (B, t, 4)
@@ -280,14 +272,8 @@ if __name__ =="__main__":
 
         # Trajectory loss
         if config.use_traj:
-            # 为计算损失，反归一化 GT 轨迹
             GT_traj = GT_traj * traj_std + traj_mean
-            
-            # 核心修改：始终从最终的、反归一化的精炼动作 pred_det_motion 中反算出轨迹
-            # 这利用了 utils/ops.py 中的 motion_to_traj 函数
-            pred_det_traj = ops.motion_to_traj(pred_det_motion) #
-
-            # 基于反算出的轨迹计算间接损失
+            pred_det_traj = ops.motion_to_traj(pred_det_motion)
             loss_traj = loss.traj_loss(pred_det_traj, GT_traj, config.context_frames)
             loss_dict["traj"] += loss_traj.item()
         else:
@@ -320,10 +306,10 @@ if __name__ =="__main__":
         if config.get("use_dynamic_loss_weighting", False) and config.use_traj:
             # Group losses into pose-related and trajectory-related
             loss_pose_group = (config.weight_rot * loss_rot + 
-                            config.weight_pos * loss_pos + 
-                            config.weight_contact * loss_contact +
-                            (config.weight_phase * loss_phase if config.use_phase else 0) +
-                            (config.weight_foot_consistency * loss_foot_consistency if config.get("use_foot_consistency", False) else 0))
+                              config.weight_pos * loss_pos + 
+                              config.weight_contact * loss_contact +
+                              (config.weight_phase * loss_phase if config.use_phase else 0) +
+                              (config.weight_foot_consistency * loss_foot_consistency if config.get("use_foot_consistency", False) else 0))
             
             loss_traj_group = config.weight_traj * loss_traj
             
@@ -340,8 +326,8 @@ if __name__ =="__main__":
         else:
             # Traditional static weighting
             loss_total = (config.weight_rot * loss_rot + 
-                        config.weight_pos * loss_pos +
-                        config.weight_contact * loss_contact)
+                         config.weight_pos * loss_pos +
+                         config.weight_contact * loss_contact)
             
             if config.use_phase:
                 loss_total += config.weight_phase * loss_phase

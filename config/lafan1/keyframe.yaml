@@ -7,6 +7,7 @@ context_frames: 10
 use_phase: true
 use_traj: true
 use_score: true
+use_foot_consistency: true  # Toggle for foot consistency loss
 
 save_dir: "save/lafan1/KeyframeNet"
 save_interval: 50
@@ -32,8 +33,12 @@ dropout: 0.0
 pre_lnorm: true
 atten_bias: false
 
+contact_joints: [ "mixamorig:LeftFoot", "mixamorig:LeftToeBase", "mixamorig:RightFoot", "mixamorig:RightToeBase" ]
+contact_threshold: 2e-4
+
 weight_rot: 1.0
 weight_pos: 1.0
 weight_phase: 0.5
 weight_traj: 0.001
 weight_score: 1.0
+weight_foot_consistency: 0.25  # Weight for foot consistency loss

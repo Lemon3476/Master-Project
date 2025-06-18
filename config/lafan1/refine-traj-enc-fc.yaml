@@ -7,7 +7,7 @@ context_frames: 10
 use_phase: true
 use_traj: true
 use_score: true
-decoupled_encoders: true  # Activate dual-encoder architecture
+decoupled_traj_encoder: true  # Activate dual-encoder architecture
 traj_guidance_scale: 1.0  # Trajectory guidance strength
 use_foot_consistency: true  # Activate foot consistency loss
 

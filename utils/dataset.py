@@ -12,15 +12,6 @@ class MotionDataset(Dataset):
         self.train = train
         self.config = config
 
-        # ========== 在这里加入调试代码（部分1） ==========
-        # 动态构建文件路径，并打印出来
-        npz_full_path = os.path.join(config.dataset_dir, "MIB", f"{'train' if train else 'test'}-{config.npz_path}")
-        print("-" * 60)
-        print(f"[DEBUG-INFO] Attempting to load NPZ file:")
-        print(f"[DEBUG-INFO] -> {npz_full_path}")
-        print("-" * 60)
-        # ===============================================   
-
         # load features
         features = np.load(os.path.join(config.dataset_dir, "MIB", f"{'train' if train else 'test'}-{config.npz_path}"))
 
@@ -28,14 +19,6 @@ class MotionDataset(Dataset):
         self.phase = torch.from_numpy(features["phase"]).float()   # (B, T, 2P) where P is the number of phase channels
         self.traj = torch.from_numpy(features["traj"]).float()     # (B, T, 4)
         self.score = torch.from_numpy(features["scores"]).float()  # (B, T, 1)
-
-        # ========== 在这里加入调试代码（部分2） ==========
-        print(f"[DEBUG-INFO] NPZ file loaded successfully.")
-        print(f"[DEBUG-INFO] Raw data shape from NPZ (Samples, Frames, Features): {self.motion.shape}")
-        print(f"[DEBUG-INFO] -> Total Samples loaded: {self.motion.shape[0]}")
-        print(f"[DEBUG-INFO] -> Frames per Sample: {self.motion.shape[1]}")
-        print("-" * 60)
-        # ===============================================
 
         # if "human36m" in self.config.dataset_dir:
         #     if self.config.window_offset != 1:

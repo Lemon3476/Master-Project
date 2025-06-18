@@ -40,6 +40,30 @@ def score_loss(pred, gt, context_frames):
     loss = F.l1_loss(pred[:, context_frames:-1], gt[:, context_frames:-1])
     return loss
 
+def foot_consistency_loss(foot_positions, contact_probs):
+    """Calculate foot consistency loss to enforce stability during contact
+    
+    Args:
+        foot_positions: Foot joint positions [B, T, J, 3]
+        contact_probs: Contact probabilities [B, T, J]
+    
+    Returns:
+        Loss value penalizing foot sliding during stable contacts
+    """
+    # Create mask for stable contact states (contact in both frames)
+    contact_maintained_mask = (contact_probs[:, 1:] > 0.8) & (contact_probs[:, :-1] > 0.8)
+    
+    # Calculate foot displacement between consecutive frames
+    displacement = torch.norm(foot_positions[:, 1:] - foot_positions[:, :-1], p=2, dim=-1)
+    
+    # Only penalize displacement for feet that should be in stable contact
+    masked_displacement = displacement * contact_maintained_mask
+    
+    # Average over all samples and time steps with valid errors
+    loss = torch.sum(masked_displacement) / (torch.sum(contact_maintained_mask) + 1e-6)
+    
+    return loss
+
 # 带掩码的损失函数 - 用于稀疏关键帧模式
 def masked_rot_loss(pred, gt, mask):
     """计算带掩码的旋转损失

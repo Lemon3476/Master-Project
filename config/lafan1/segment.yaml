@@ -8,16 +8,17 @@ use_phase: true
 use_traj: true
 use_score: true
 
-save_dir: "save/lafan1/RefineNetWoInterpolation"
+save_dir: "save/lafan1/SegmentNet"
 save_interval: 50
 val_interval: 10
 
 batch_size: 64
-epochs: 1000
-warmup_iters: 8000
+epochs: 500
+lr: 2.0e-4
 
-# Special flag for skipping interpolation during training
-skip_interpolation: true
+# Segment-specific parameters
+overlap_frames: 10
+max_segment_length: 40
 
 min_trans: 5
 max_trans: 90

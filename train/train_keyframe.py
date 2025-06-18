@@ -35,6 +35,14 @@ if __name__ =="__main__":
     dataset = MotionDataset(train=True, config=config)
     dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
     skeleton = dataset.skeleton
+    
+    # Define contact joints for foot consistency loss
+    contact_idx = []
+    if config.get("use_foot_consistency", False):
+        contact_joints = config.get("contact_joints", ["mixamorig:LeftFoot", "mixamorig:LeftToeBase", 
+                                                     "mixamorig:RightFoot", "mixamorig:RightToeBase"])
+        for joint in contact_joints:
+            contact_idx.append(skeleton.idx_by_name[joint])
 
     mean, std = dataset.motion_statistics(device)
     traj_mean, traj_std = dataset.traj_statistics(device)
@@ -63,6 +71,8 @@ if __name__ =="__main__":
         loss_dict["traj"] = 0.0
     if config.use_score:
         loss_dict["score"] = 0.0
+    if config.get("use_foot_consistency", False):
+        loss_dict["foot_consistency"] = 0.0
     if config.get("use_dynamic_loss_weighting", False):
         loss_dict["pose_weight"] = 0.0
         loss_dict["traj_weight"] = 0.0
@@ -91,6 +101,14 @@ if __name__ =="__main__":
         GT_local_ortho6ds, GT_root_pos = torch.split(GT_motion, [M-3, 3], dim=-1)
         GT_local_ortho6ds = GT_local_ortho6ds.reshape(B, T, skeleton.num_joints, 6)
         _, GT_global_positions = trf.t_ortho6d.fk(GT_local_ortho6ds, GT_root_pos, skeleton)
+        
+        # Calculate contact information for foot consistency if needed
+        if config.get("use_foot_consistency", False):
+            GT_foot_vel = GT_global_positions[:, 1:, contact_idx] - GT_global_positions[:, :-1, contact_idx]
+            GT_foot_vel = torch.sum(GT_foot_vel ** 2, dim=-1)  # (B, T-1, num_contact_joints)
+            GT_foot_vel = torch.cat([GT_foot_vel[:, 0:1], GT_foot_vel], dim=1)  # (B, T, num_contact_joints)
+            contact_threshold = config.get("contact_threshold", 1e-4)
+            GT_contact = (GT_foot_vel < contact_threshold).float()  # (B, T, num_contact_joints)
 
         # forward
         GT_motion = (GT_motion - mean) / std
@@ -137,14 +155,8 @@ if __name__ =="__main__":
             loss_phase = torch.tensor(0.0, device=device)
 
         if config.use_traj:
-            # 为计算损失，反归一化 GT 轨迹
             GT_traj = GT_traj * traj_std + traj_mean
-            
-            # 核心修改：始终从最终的、反归一化的预测动作 pred_motion 中反算出轨迹
-            # 这利用了 utils/ops.py 中的 motion_to_traj 函数
-            pred_traj = ops.motion_to_traj(pred_motion) #
-            
-            # 基于反算出的轨迹计算间接损失
+            pred_traj = ops.motion_to_traj(pred_motion)
             loss_traj = loss.traj_loss(pred_traj, GT_traj, config.context_frames)
             loss_dict["traj"] += loss_traj.item()
         else:
@@ -155,6 +167,17 @@ if __name__ =="__main__":
             loss_dict["score"] += loss_score.item()
         else:
             loss_score = torch.tensor(0.0, device=device)
+            
+        # Foot consistency loss
+        loss_foot_consistency = torch.tensor(0.0, device=device)
+        if config.get("use_foot_consistency", False):
+            # Extract foot positions from the predicted motion
+            foot_positions = pred_global_positions[:, :, contact_idx, :]
+            
+            # Use the foot consistency loss function from utils.loss
+            loss_foot_consistency = loss.foot_consistency_loss(foot_positions, GT_contact)
+            
+            loss_dict["foot_consistency"] += loss_foot_consistency.item()
 
         # Dynamic loss weighting or static loss weighting
         if config.get("use_dynamic_loss_weighting", False) and config.use_traj:
@@ -162,7 +185,8 @@ if __name__ =="__main__":
             loss_pose_group = (config.weight_rot * loss_rot + 
                               config.weight_pos * loss_pos + 
                               (config.weight_phase * loss_phase if config.use_phase else 0) + 
-                              (config.weight_score * loss_score if config.use_score else 0))
+                              (config.weight_score * loss_score if config.use_score else 0) +
+                              (config.weight_foot_consistency * loss_foot_consistency if config.get("use_foot_consistency", False) else 0))
             
             loss_traj_group = config.weight_traj * loss_traj
             
@@ -189,6 +213,9 @@ if __name__ =="__main__":
                 
             if config.use_score:
                 loss_total += config.weight_score * loss_score
+                
+            if config.get("use_foot_consistency", False):
+                loss_total += config.weight_foot_consistency * loss_foot_consistency
 
         loss_dict["total"] += loss_total.item()
         

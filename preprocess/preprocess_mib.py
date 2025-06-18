@@ -331,19 +331,6 @@ def preprocess(config, dataset, train=True):
         fps = fbx.fps()  # Get fps from FBX file
         print(f"FPS: {fps}")
 
-        # ========== 在这里加入调试代码 ==========
-        # print("-" * 50)
-        # num_raw_frames = sum(m.num_frames for m in motions)
-        # num_trimmed_frames = sum(m.num_frames - (fbx.fps() * 2) for m in motions)
-        # print(f"原始动作总帧数: {num_raw_frames}")
-        # print(f"裁切后(fps*2)的有效总帧数: {num_trimmed_frames}")
-        # print(f"加载的相位特征数量: {len(phases)}")
-        # print("逻辑要求: '有效总帧数' 必须等于 '相位特征数量'")
-        # if num_trimmed_frames != len(phases):
-        #     print("错误: 长度不匹配! 这将导致预处理失败。")
-        # print("-" * 50)
-        # =======================================
-
     elif dataset == "100style":
         dataset_dir = os.path.join(config.dataset_dir, "train" if train else "test")
         motions = []
