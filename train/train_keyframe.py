@@ -137,20 +137,16 @@ if __name__ =="__main__":
             loss_phase = torch.tensor(0.0, device=device)
 
         if config.use_traj:
+            # 为计算损失，反归一化 GT 轨迹
             GT_traj = GT_traj * traj_std + traj_mean
             
-            # Handle trajectory loss based on decoder configuration
-            if config.get("decoupled_traj_decoder", False) and "traj" in ctx_out:
-                # New behavior: Use direct trajectory output from decoder
-                # Denormalize the predicted trajectory
-                pred_traj_from_decoder = ctx_out["traj"] * traj_std + traj_mean
-                loss_traj = loss.traj_loss(pred_traj_from_decoder, GT_traj, config.context_frames)
-                loss_dict["traj"] += loss_traj.item()
-            else:
-                # Original behavior: Derive trajectory from motion
-                pred_traj = ops.motion_to_traj(pred_motion)
-                loss_traj = loss.traj_loss(pred_traj, GT_traj, config.context_frames)
-                loss_dict["traj"] += loss_traj.item()
+            # 核心修改：始终从最终的、反归一化的预测动作 pred_motion 中反算出轨迹
+            # 这利用了 utils/ops.py 中的 motion_to_traj 函数
+            pred_traj = ops.motion_to_traj(pred_motion) #
+            
+            # 基于反算出的轨迹计算间接损失
+            loss_traj = loss.traj_loss(pred_traj, GT_traj, config.context_frames)
+            loss_dict["traj"] += loss_traj.item()
         else:
             loss_traj = torch.tensor(0.0, device=device)
         

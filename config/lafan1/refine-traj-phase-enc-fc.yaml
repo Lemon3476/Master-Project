@@ -1,24 +1,27 @@
+# config/lafan1/refine-traj-phase-enc-fc.yaml
 dataset_dir: "dataset/lafan1"
 
 window_length: 101
 window_offset: 20
 context_frames: 10
 
+# --- Key Architectural Flags ---
 use_phase: true
 use_traj: true
 use_score: true
-decoupled_traj_encoder: true     # Updated flag for trajectory
-decoupled_phase_encoder: true    # New flag for phase
-traj_guidance_scale: 1.0
+decoupled_phase_encoder: true
+decoupled_traj_encoder: true
+decoupled_traj_decoder: false
+use_foot_consistency: true
+# ---
 
-save_dir: "save/lafan1/KeyframeNet-TrajPhaseEncoder"
+save_dir: "save/lafan1/RefineNet-traj-phase-enc-fc"
 save_interval: 50
 val_interval: 10
 
 batch_size: 64
-epochs: 500
+epochs: 1000
 warmup_iters: 8000
-
 
 min_trans: 5
 max_trans: 90
@@ -41,6 +44,7 @@ d_gating_h: 512
 dropout: 0.0
 pre_lnorm: true
 atten_bias: false
+residual: true
 
 weight_rot: 1.0
 weight_pos: 2.0
@@ -48,3 +52,4 @@ weight_phase: 0.5
 weight_traj: 0.5
 weight_contact: 0.1
 weight_score: 1.0
+weight_foot_consistency: 0.1

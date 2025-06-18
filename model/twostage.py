@@ -101,16 +101,12 @@ class ContextTransformer(nn.Module):
                 nn.Linear(self.config.d_decoder_h, self.d_traj)
             )
 
-        # Spatio-Temporal Gating Network - uses both phase and trajectory as input for enhanced control
+        # Gating Network - only uses phase as input (方案三)
         if self.use_phase:
-            # Determine gating input dimensions based on available features
-            gating_input_dim = self.d_phase  # Base: phase only
+            # 方案三: Always use only phase for gating, even if traj decoder is available
+            gating_input_dim = self.d_phase
             
-            # Add trajectory dimension if using decoupled trajectory decoder
-            if self.use_traj and self.decoupled_traj_decoder:
-                gating_input_dim += self.d_traj  # Add trajectory dimension for spatial awareness
-            
-            # Create enhanced gating network
+            # Create phase-only gating network
             self.gating = nn.Sequential(
                 nn.Linear(gating_input_dim, self.config.d_gating_h),
                 nn.PReLU(),
@@ -317,15 +313,10 @@ class ContextTransformer(nn.Module):
         else:
             predicted_traj = None
             
-        # Create spatio-temporal gating signal
+        # Create phase-only gating signal (方案三)
         if self.use_phase and predicted_phase is not None:
-            if self.use_traj and self.decoupled_traj_decoder and predicted_traj is not None:
-                # Enhanced spatio-temporal gating: concatenate phase and trajectory
-                gating_input = torch.cat([predicted_phase, predicted_traj], dim=-1)
-                expert_weights = self.gating(gating_input)
-            else:
-                # Fall back to phase-only gating if no trajectory available
-                expert_weights = self.gating(predicted_phase)
+            # 方案三: Always use only phase for gating
+            expert_weights = self.gating(predicted_phase)
                 
             # 4. Final Motion Generation with MoE - from transformer output zL
             motion_x = zL  # Use transformer output for motion decoding
@@ -477,16 +468,12 @@ class DetailTransformer(nn.Module):
                 nn.Linear(self.config.d_decoder_h, self.d_traj)
             )
 
-        # Spatio-Temporal Gating Network - uses both phase and trajectory as input for enhanced control
+        # Gating Network - only uses phase as input (方案三)
         if self.use_phase:
-            # Determine gating input dimensions based on available features
-            gating_input_dim = self.d_phase  # Base: phase only
+            # 方案三: Always use only phase for gating, even if traj decoder is available
+            gating_input_dim = self.d_phase
             
-            # Add trajectory dimension if using decoupled trajectory decoder
-            if self.use_traj and self.decoupled_traj_decoder:
-                gating_input_dim += self.d_traj  # Add trajectory dimension for spatial awareness
-            
-            # Create enhanced gating network
+            # Create phase-only gating network
             self.gating = nn.Sequential(
                 nn.Linear(gating_input_dim, self.config.d_gating_h),
                 nn.PReLU(),
@@ -620,7 +607,8 @@ class DetailTransformer(nn.Module):
             # 2. Add phase embedding if using decoupled phase encoder
             if self.use_phase and phase is not None and self.decoupled_phase_encoder:
                 # Apply mask for known/unknown frames
-                phase_embedding = self.phase_encoder(phase)
+                masked_phase = phase * data_mask
+                phase_embedding = self.phase_encoder(masked_phase)
                 # Add phase embedding
                 x = x + phase_embedding
             
@@ -673,15 +661,10 @@ class DetailTransformer(nn.Module):
         else:
             predicted_traj = None
             
-        # Create spatio-temporal gating signal
+        # Create phase-only gating signal (方案三)
         if self.use_phase and predicted_phase is not None:
-            if self.use_traj and self.decoupled_traj_decoder and predicted_traj is not None:
-                # Enhanced spatio-temporal gating: concatenate phase and trajectory
-                gating_input = torch.cat([predicted_phase, predicted_traj], dim=-1)
-                expert_weights = self.gating(gating_input)
-            else:
-                # Fall back to phase-only gating if no trajectory available
-                expert_weights = self.gating(predicted_phase)
+            # 方案三: Always use only phase for gating
+            expert_weights = self.gating(predicted_phase)
                 
             # 4. Final Motion Generation with MoE - from transformer output zL
             motion_x = zL  # Use transformer output for motion decoding

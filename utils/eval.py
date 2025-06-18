@@ -19,10 +19,6 @@ class Evaluator:
         # SegmentNet configs for replace_target_with_segment mode
         self.seg_configs = []
         self.seg_models = []
-        
-        if hasattr(args, 'seg_config') and args.seg_config is not None:
-            self.seg_configs = [utils.load_config(f"config/{args.dataset}/{args.seg_config}")]
-            print(f"Loaded SegmentNet config: {args.seg_config}")
             
         # Set replace_target_with_segment mode flag
         self.replace_target_with_segment = args.replace_target_with_segment if hasattr(args, 'replace_target_with_segment') else False
