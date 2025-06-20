@@ -9,7 +9,7 @@ from aPyOpenGL import agl
 import torch
 from torch.utils.data import DataLoader
 
-from utils import utils, ops, eval
+from utils import eval_backup, utils, ops
 from utils.dataset import MotionDataset
 from model.twostage import ContextTransformer, DetailTransformer
 from model.rmi import RmiGenerator
@@ -68,7 +68,7 @@ if __name__ =="__main__":
         # forward two-stage model
         motions, tags = [GT_motion], ["GT"]
         for i, ref_config in enumerate(ref_configs):
-            motions.append(eval.ours_transition(ref_config, kf_model, ref_model, GT_motion, mean, std, GT_contact, GT_phase, GT_traj, GT_score, traj_mean, traj_std)["ref_motion"])
+            motions.append(eval_backup.ours_transition(ref_config, kf_model, ref_model, GT_motion, mean, std, GT_contact, GT_phase, GT_traj, GT_score, traj_mean, traj_std)["ref_motion"])
             tags.append(f"Ours-{i}")
 
         agl.AppManager.start(MotionApp(motions,

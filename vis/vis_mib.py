@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from aPyOpenGL import agl
 
-from utils.eval import Evaluator, _segment_net_transition
+from utils.eval_backup import Evaluator, _segment_net_transition
 from utils import ops
 from vis.motionapp import MotionApp
 from model.segment_net import SegmentNet

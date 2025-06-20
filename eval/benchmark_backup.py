@@ -118,11 +118,11 @@ if __name__ =="__main__":
                         pred_motion_single = res["motions"][method_idx][seq_idx:seq_idx+1]
                         pred_contact_single = res["contacts"][method_idx][seq_idx:seq_idx+1]
 
-                        # Calculate metrics
-                        l2p_val = eval_backup.l2p(gt_motion_single, pred_motion_single, skeleton, evaluator.l2p_mean, evaluator.l2p_std, evaluator.config.context_frames)
-                        l2q_val = eval_backup.l2q(gt_motion_single, pred_motion_single, evaluator.config.context_frames)
-                        npss_val = eval_backup.npss(gt_motion_single, pred_motion_single, evaluator.config.context_frames)
-                        fs_val = eval_backup.foot_skate(pred_motion_single, pred_contact_single, skeleton, evaluator.contact_idx, ctx_frames=evaluator.config.context_frames)
+                        # Calculate metrics with standard deviation
+                        l2p_val, l2p_std = eval_backup.l2p(gt_motion_single, pred_motion_single, skeleton, evaluator.l2p_mean, evaluator.l2p_std, evaluator.config.context_frames, return_std=True)
+                        l2q_val, l2q_std = eval_backup.l2q(gt_motion_single, pred_motion_single, evaluator.config.context_frames, return_std=True)
+                        npss_val, npss_std = eval_backup.npss(gt_motion_single, pred_motion_single, evaluator.config.context_frames, return_std=True)
+                        fs_val, fs_std = eval_backup.foot_skate(pred_motion_single, pred_contact_single, skeleton, evaluator.contact_idx, ctx_frames=evaluator.config.context_frames, return_std=True)
 
                         row = {
                             "Method": method_tag,
@@ -130,9 +130,13 @@ if __name__ =="__main__":
                             "Sequence": seq_idx,
                             "Transition Length": trans,
                             "L2P": l2p_val,
+                            "L2P_std": l2p_std,
                             "L2Q": l2q_val,
+                            "L2Q_std": l2q_std,
                             "NPSS": npss_val * 10,
-                            "Foot Skate": fs_val * 10,
+                            "NPSS_std": npss_std * 10,
+                            "Foot Skate": fs_val,
+                            "Foot Skate_std": fs_std,
                         }
                         results_table.append(row)
                 
@@ -164,7 +168,14 @@ if __name__ =="__main__":
         else: kf_sampling = [args.kf_sampling]
         
         evaluator = eval_backup.Evaluator(args)
-        results = { "tags": None, "l2p": [], "l2q": [], "npss": [], "foot skate": [] }
+        # 更新结果存储结构，同时保存均值和标准差
+        results = { 
+            "tags": None, 
+            "l2p": {"mean": [], "std": []}, 
+            "l2q": {"mean": [], "std": []}, 
+            "npss": {"mean": [], "std": []}, 
+            "foot skate": {"mean": [], "std": []}
+        }
         
         segment_model, keyframe_model, dataset = None, None, None
         if results["tags"] is None: results["tags"] = []
@@ -229,27 +240,80 @@ if __name__ =="__main__":
             final_motion_list = [torch.cat([b[i] for b in motion_list], dim=0) for i in range(len(motion_list[0]))]
             final_contact_list = [torch.cat([b[i] for b in contact_list], dim=0) for i in range(len(contact_list[0]))]
 
-            results["l2p"].append([eval_backup.l2p(final_motion_list[0], m, skeleton, evaluator.l2p_mean, evaluator.l2p_std) for m in final_motion_list[1:]])
-            results["l2q"].append([eval_backup.l2q(final_motion_list[0], m) for m in final_motion_list[1:]])
-            results["npss"].append([eval_backup.npss(final_motion_list[0], m) for m in final_motion_list[1:]])
-            results["foot skate"].append([eval_backup.foot_skate(m, c, skeleton, evaluator.contact_idx) for m, c in zip(final_motion_list[1:], final_contact_list[1:])])
+            # 计算每个指标的均值和标准差
+            l2p_means, l2p_stds = [], []
+            l2q_means, l2q_stds = [], []
+            npss_means, npss_stds = [], []
+            fs_means, fs_stds = [], []
+            
+            # 对每个方法计算指标，获取均值和标准差
+            for m in final_motion_list[1:]:
+                l2p_mean, l2p_std = eval_backup.l2p(final_motion_list[0], m, skeleton, evaluator.l2p_mean, evaluator.l2p_std, return_std=True)
+                l2p_means.append(l2p_mean)
+                l2p_stds.append(l2p_std)
+                
+                l2q_mean, l2q_std = eval_backup.l2q(final_motion_list[0], m, return_std=True)
+                l2q_means.append(l2q_mean)
+                l2q_stds.append(l2q_std)
+                
+                npss_mean, npss_std = eval_backup.npss(final_motion_list[0], m, return_std=True)
+                npss_means.append(npss_mean)
+                npss_stds.append(npss_std)
+            
+            # 计算脚部滑动
+            for m, c in zip(final_motion_list[1:], final_contact_list[1:]):
+                fs_mean, fs_std = eval_backup.foot_skate(m, c, skeleton, evaluator.contact_idx, return_std=True)
+                fs_means.append(fs_mean)
+                fs_stds.append(fs_std)
+            
+            # 存储结果
+            results["l2p"]["mean"].append(l2p_means)
+            results["l2p"]["std"].append(l2p_stds)
+            results["l2q"]["mean"].append(l2q_means)
+            results["l2q"]["std"].append(l2q_stds)
+            results["npss"]["mean"].append(npss_means)
+            results["npss"]["std"].append(npss_stds)
+            results["foot skate"]["mean"].append(fs_means)
+            results["foot skate"]["std"].append(fs_stds)
         
-        # Original text file saving logic
+        # 更新后的结果保存逻辑，支持显示均值±标准差
         output_filename = f"eval/benchmark-{args.dataset}{'-segment' if args.use_segment else ''}.txt"
+        
+        # 辅助函数，用于生成带有标准差的行
+        def get_row_with_std(method_name, metric_name, transitions, results_dict, method_idx):
+            """生成包含均值和标准差的LaTeX表格行"""
+            row = str(method_name)
+            for i in range(len(transitions)):
+                mean_val = results_dict[metric_name]["mean"][i][method_idx]
+                std_val = results_dict[metric_name]["std"][i][method_idx]
+                
+                # 根据指标类型决定是否进行缩放
+                if metric_name in ["l2p", "l2q"]:
+                    # 不缩放
+                    row += f" & {mean_val:.2f} $\\pm$ {std_val:.2f}"
+                else:
+                    # 缩放10倍
+                    row += f" & {mean_val:.2f} $\\pm$ {std_val:.2f}"
+            return row + " \\\\\n"
+        
         with open(output_filename, "w") as f:
             metric_list = ["l2p", "l2q", "npss", "foot skate"]
             if args.traj_edit is not None: metric_list.append("traj")
+            
             for metric in metric_list:
                 f.write(f"{metric.upper() if metric != 'foot skate' else 'Foot skate'}\n")
+                
+                # 表头
                 row = f"$t_\\mathrm{{trans}}$"
                 for t in transitions: row += f" & {t}"
                 f.write(f"{row} \\\\ \\midrule\n")
-                for i in range(len(results["tags"])): 
+                
+                # 对每个方法生成带有标准差的行
+                for i in range(len(results["tags"])):
                     method = results["tags"][i]
-                    row_str = str(method)
-                    for j in range(len(transitions)):
-                        row_str += f" & {results[metric][j][i]:.2f}" if metric in ["l2p", "l2q"] else f" & {results[metric][j][i] * 10:.2f}"
-                    f.write(row_str + " \\\\\n")
+                    row_str = get_row_with_std(method, metric, transitions, results, i)
+                    f.write(row_str)
+                
                 f.write("\n")
         
         print("Benchmark evaluation finished.")

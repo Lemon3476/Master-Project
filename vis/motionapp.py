@@ -407,12 +407,17 @@ class MotionApp(agl.App):
         # This ensures consistent spacing from the beginning of recording
         visible_idx = 0
         for motion in self.motions:
-            if motion.visible:
+            # Make GT and Ours animations visible
+            if motion.tag == "GT" or motion.tag == "Ours" or motion.tag.startswith("Ours-"):
+                motion.visible = True
                 # Apply consistent offset for each visible motion
                 motion.offset = np.array([visible_idx * 1.5, 0, 0], dtype=np.float32)
                 visible_idx += 1
+            else:
+                # Hide other animations
+                motion.visible = False
         
-        print(f"Applied offsets to {visible_idx} visible animations for video recording")
+        print(f"Applied offsets to {visible_idx} visible animations (GT and Ours) for video recording")
         
         # Create video writers for each visible motion
         for motion in self.motions:
@@ -908,10 +913,16 @@ class MotionApp(agl.App):
     def start(self):
         super().start()
         
-        # Set to paused state for normal mode, but enable for recording or compare mode
-        # Also auto-play when save_videos_and_images is used
-        self.playing = self.recording_mode or self.compare_mode or self.save_videos
+        # Set to paused state for normal mode, enable for recording or compare mode
+        # For save_videos_and_images mode, start paused and wait for user to press play
+        self.playing = self.recording_mode or self.compare_mode  # No longer auto-start for save_videos
         self.should_record_frame = False
+        
+        # Flag to indicate we're in save_videos mode but waiting for user to press play
+        self.waiting_for_play = self.save_videos and not self.recording_mode
+        if self.waiting_for_play:
+            print("=== VIDEO RECORDING READY ===")
+            print("Press SPACE to start recording when ready")
         
         # Initialize frame indices if not already done
         if not hasattr(self, 'frame'):
@@ -980,10 +991,15 @@ class MotionApp(agl.App):
             motions.append(motion_struct)
         self.motions = motions
         
-        # Now that motions are initialized, start video recording if needed
+        # Setup for video recording, but only start if not in waiting_for_play mode
         if self.save_videos and not self.recording_mode:
-            self._start_video_recording(self.recording_batch)
-            print("=== AUTO-PLAY RECORDING STARTED ===")
+            if not hasattr(self, 'waiting_for_play') or not self.waiting_for_play:
+                # Auto-start for non-interactive or legacy modes
+                self._start_video_recording(self.recording_batch)
+                print("=== AUTO-PLAY RECORDING STARTED ===")
+            else:
+                # In waiting_for_play mode, just prepare motions but don't start recording yet
+                print("=== VIDEO READY - PRESS SPACE TO START RECORDING ===")
         
         # Apply split view if requested (for replace_target mode)
         if self._enable_split_view:
@@ -991,25 +1007,25 @@ class MotionApp(agl.App):
             self.move_character = True
             print("  Split view mode enabled - spreading animations apart")
             
-            # Apply offsets to spread the animations apart (only for Ours animations)
-            ours_idx = 0
-            has_ours = False
+            # Apply offsets to spread the animations apart (for GT and Ours animations)
+            motion_idx = 0
+            has_animations = False
             
             for idx, motion in enumerate(self.motions):
-                # Only show and spread Ours animations
-                if motion.tag == "Ours" or motion.tag.startswith("Ours"):
-                    motion.offset = np.array([ours_idx * 1.5, 0, 0], dtype=np.float32)
+                # Show and spread both GT and Ours animations
+                if motion.tag == "GT" or motion.tag == "Ours" or motion.tag.startswith("Ours"):
+                    motion.offset = np.array([motion_idx * 1.5, 0, 0], dtype=np.float32)
                     motion.visible = True
-                    ours_idx += 1
-                    has_ours = True
+                    motion_idx += 1
+                    has_animations = True
                 else:
-                    # Hide GT and other non-Ours animations
+                    # Hide other animations (like ERD-QV, TS-Trans)
                     motion.visible = False
             
-            if has_ours:
-                print(f"  Separated {ours_idx} 'Ours' animations (GT hidden)")
+            if has_animations:
+                print(f"  Separated {motion_idx} animations (GT and Ours visible)")
             else:
-                print("  Warning: No 'Ours' animations found to display")
+                print("  Warning: No animations found to display")
         
         # Start compare mode if enabled
         if self.compare_mode:
@@ -1034,25 +1050,25 @@ class MotionApp(agl.App):
             for i, motion in enumerate(self.motions):
                 print(f"  {i}: {motion.tag}")
             
-            # Only make Ours-related motions visible for recording
+            # Make GT and Ours-related motions visible for recording
             # Also ensure they have proper offsets if move_character is enabled
-            ours_idx = 0
+            motion_idx = 0
             for motion in self.motions:
-                if motion.tag == "Ours" or motion.tag.startswith("Ours-"):
+                if motion.tag == "GT" or motion.tag == "Ours" or motion.tag.startswith("Ours-"):
                     motion.visible = True
                     
                     # Apply offset if move_character is enabled (for animation separation)
                     if self.move_character:
-                        motion.offset = np.array([ours_idx * 1.5, 0, 0], dtype=np.float32)
-                        ours_idx += 1
+                        motion.offset = np.array([motion_idx * 1.5, 0, 0], dtype=np.float32)
+                        motion_idx += 1
                         
                     print(f"Motion: {motion.tag} - set visible: True, offset: {motion.offset}")
                 else:
                     motion.visible = False
                     print(f"Motion: {motion.tag} - set visible: False")
             
-            if self.move_character and ours_idx > 0:
-                print(f"Applied offsets to {ours_idx} 'Ours' animations for separation")
+            if self.move_character and motion_idx > 0:
+                print(f"Applied offsets to {motion_idx} animations (GT and Ours) for separation")
             
             # Initialize recording_frame and frame indices for recording
             self.recording_frame = 0
@@ -1090,6 +1106,10 @@ class MotionApp(agl.App):
     def update(self):
         super().update()
         
+        # Skip updates if in waiting_for_play mode
+        if hasattr(self, 'waiting_for_play') and self.waiting_for_play:
+            return
+            
         # Handle recording mode
         if self.recording_mode and self.save_videos:
             if self.recording_frame < self.frame_per_batch:
@@ -1554,7 +1574,7 @@ class MotionApp(agl.App):
         # Handle frame recording after all rendering is complete
         if (self.recording_mode and hasattr(self, 'should_record_frame') and self.should_record_frame) or \
            (self.compare_mode and self.save_videos) or \
-           (self.save_videos and self.playing):  # Also record in auto-play mode
+           (self.save_videos and self.playing and not (hasattr(self, 'waiting_for_play') and self.waiting_for_play)):  # Only record when not in waiting mode
             self._record_current_frame()
             if hasattr(self, 'should_record_frame'):
                 self.should_record_frame = False
@@ -1577,6 +1597,19 @@ class MotionApp(agl.App):
 
         if action != glfw.PRESS:
             return
+        
+        # Handle space key for starting recording when in waiting_for_play mode
+        if key == 32:  # SPACE key
+            if hasattr(self, 'waiting_for_play') and self.waiting_for_play:
+                print("=== RECORDING STARTED ===")
+                self.playing = True
+                self.waiting_for_play = False
+                # Start recording
+                if self.save_videos:
+                    self._start_video_recording(self.recording_batch)
+            else:
+                # Toggle playing state for normal mode
+                self.playing = not self.playing
         
         if mods & glfw.MOD_ALT:
             if (glfw.KEY_1 <= key <= len(self.motions) + glfw.KEY_1):

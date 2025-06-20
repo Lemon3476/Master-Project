@@ -7,7 +7,7 @@ import argparse
 import torch
 from torch.utils.data import DataLoader
 
-from utils import utils, ops, eval
+from utils import eval_backup, utils, ops
 from utils.dataset import MotionDataset
 from model.twostage import ContextTransformer, DetailTransformer
 from model.rmi import RmiGenerator
@@ -70,7 +70,7 @@ if __name__ =="__main__":
             score = GT_score if kf_configs[idx].use_score else None
             traj = GT_traj if kf_configs[idx].use_traj else None
 
-            ablations.append(eval.ours_transition(ref_configs[idx], kf_model, ref_model, GT_motion, mean, std, GT_contact, phase, traj, score, traj_mean, traj_std)["ref_motion"])
+            ablations.append(eval_backup.ours_transition(ref_configs[idx], kf_model, ref_model, GT_motion, mean, std, GT_contact, phase, traj, score, traj_mean, traj_std)["ref_motion"])
 
         return GT_motion, ablations
 
@@ -104,19 +104,19 @@ if __name__ =="__main__":
         # L2P
         l2p_ablations = []
         for ablation in ablations:
-            l2p_ablations.append(eval.l2p(gt, ablation, skeleton, l2p_mean, l2p_std, config.context_frames))
+            l2p_ablations.append(eval_backup.l2p(gt, ablation, skeleton, l2p_mean, l2p_std, config.context_frames))
             print(f"L2P (ablation{idx+1}): {l2p_ablations[-1]:.3f}")
 
         # L2Q
         l2q_ablations = []
         for ablation in ablations:
-            l2q_ablations.append(eval.l2q(gt, ablation, config.context_frames))
+            l2q_ablations.append(eval_backup.l2q(gt, ablation, config.context_frames))
             print(f"L2Q (ablation{idx+1}): {l2q_ablations[-1]:.3f}")
 
         # NPSS
         npss_ablations = []
         for ablation in ablations:
-            npss_ablations.append(eval.npss(gt, ablation, config.context_frames))
+            npss_ablations.append(eval_backup.npss(gt, ablation, config.context_frames))
             print(f"NPSS (ablation{idx+1}): {npss_ablations[-1]:.3f}")
 
         # save

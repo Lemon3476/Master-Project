@@ -6,7 +6,7 @@ import argparse
 
 import torch
 
-from utils import eval
+from utils import eval_backup
 
 def arg_as_list(s):
     import ast
@@ -30,7 +30,7 @@ if __name__ =="__main__":
     args.ours_configs = [args.kf_config, args.ref_config]
 
     # evaluator
-    evaluator = eval.Evaluator(args)
+    evaluator = eval_backup.Evaluator(args)
     transitions = [60, 90]
     results = {
         "tags": None,
@@ -77,25 +77,25 @@ if __name__ =="__main__":
         # L2P
         l2p_list = []
         for motion in motion_list[1:]:
-            l2p = eval.l2p(motion_list[0], motion, skeleton, evaluator.l2p_mean, evaluator.l2p_std, evaluator.config.context_frames)
+            l2p = eval_backup.l2p(motion_list[0], motion, skeleton, evaluator.l2p_mean, evaluator.l2p_std, evaluator.config.context_frames)
             l2p_list.append(l2p)
 
         # L2Q
         l2q_list = []
         for motion in motion_list[1:]:
-            l2q = eval.l2q(motion_list[0], motion, evaluator.config.context_frames)
+            l2q = eval_backup.l2q(motion_list[0], motion, evaluator.config.context_frames)
             l2q_list.append(l2q)
 
         # NPSS
         npss_list = []
         for motion in motion_list[1:]:
-            npss = eval.npss(motion_list[0], motion, evaluator.config.context_frames)
+            npss = eval_backup.npss(motion_list[0], motion, evaluator.config.context_frames)
             npss_list.append(npss)
         
         # Foot skate
         fs_list = []
         for motion, contact in zip(motion_list[1:], contact_list[1:]):
-            fs = eval.foot_skate(motion, contact, skeleton, evaluator.contact_idx, ctx_frames=evaluator.config.context_frames)
+            fs = eval_backup.foot_skate(motion, contact, skeleton, evaluator.contact_idx, ctx_frames=evaluator.config.context_frames)
             fs_list.append(fs)
 
         results["l2p"].append(l2p_list)
