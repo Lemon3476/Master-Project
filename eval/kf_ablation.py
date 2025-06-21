@@ -22,6 +22,7 @@ if __name__ =="__main__":
     parser.add_argument("--config", type=str, default="default.yaml")
     parser.add_argument("--kf_config", type=str, default="keyframe.yaml")
     parser.add_argument("--ref_config", type=str, default="refine.yaml")
+    parser.add_argument("--shuffle", action="store_true", help="Enable data shuffling. By default, no shuffle is used.")
     args = parser.parse_args()
 
     args.interp = False

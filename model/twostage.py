@@ -525,16 +525,32 @@ class DetailTransformer(nn.Module):
         self.layer_norm = nn.LayerNorm(self.config.d_model)
         self.att_layers = nn.ModuleList()
         self.pff_layers = nn.ModuleList()
-
+        
+        # Check if using convolutional attention
+        use_conv = self.config.get("use_conv_attention", False)
+        kernel_size = self.config.get("kernel_size", 9)
+        
         for i in range(self.n_layer):
-            self.att_layers.append(
-                transformer.RelMultiHeadedAttention(
-                    self.config.n_head, self.config.d_model,
-                    self.config.d_head, dropout=self.config.dropout,
-                    pre_lnorm=self.config.pre_lnorm,
-                    bias=self.config.atten_bias
+            if use_conv:
+                # Use ConvBlockAttention if enabled
+                self.att_layers.append(
+                    transformer.ConvBlockAttention(
+                        d_model=self.config.d_model,
+                        kernel_size=kernel_size, 
+                        dropout=self.config.dropout,
+                        pre_lnorm=self.config.pre_lnorm
+                    )
                 )
-            )
+            else:
+                # Use RelMultiHeadedAttention by default
+                self.att_layers.append(
+                    transformer.RelMultiHeadedAttention(
+                        self.config.n_head, self.config.d_model,
+                        self.config.d_head, dropout=self.config.dropout,
+                        pre_lnorm=self.config.pre_lnorm,
+                        bias=self.config.atten_bias
+                    )
+                )
 
             self.pff_layers.append(
                 transformer.PositionwiseFeedForward(
@@ -648,7 +664,13 @@ class DetailTransformer(nn.Module):
 
         # Transformer layers
         for i in range(self.n_layer):
-            x = self.att_layers[i](x, rel_pos_emb, mask=attention_mask)
+            # Check layer type to determine how to call it
+            if isinstance(self.att_layers[i], transformer.ConvBlockAttention):
+                # ConvBlockAttention only needs the input tensor
+                x = self.att_layers[i](x)
+            else:
+                # RelMultiHeadedAttention needs rel_pos_emb and mask
+                x = self.att_layers[i](x, rel_pos_emb, mask=attention_mask)
             x = self.pff_layers[i](x)
         if self.pre_lnorm:
             x = self.layer_norm(x)

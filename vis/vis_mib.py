@@ -97,7 +97,7 @@ if __name__ =="__main__":
     parser.add_argument("--show_keyframes", action="store_true", help="Show keyframes in compare mode (default: hide keyframes)")
     parser.add_argument("--seq", type=int, default=None, help="Specific sequence index to display (0-63) when using compare_modes")
     parser.add_argument("--preserve_middle_frame", action="store_true", help="Preserve middle frame in intra mode (RefineNet won't modify it)")
-    parser.add_argument("--no_shuffle", action="store_true", help="Disable shuffling of sequences (default: shuffling enabled)")
+    parser.add_argument("--shuffle", action="store_true", help="Enable data shuffling. By default, no shuffle is used.")
     parser.add_argument("--skip_interpolation", action="store_true", help="Skip linear interpolation between keyframes and directly feed sparse keyframes to RefineNet")
     parser.add_argument("--preserve_keyframes", action="store_true", help="Preserve keyframes in standard mode, preventing RefineNet from modifying them")
     parser.add_argument("--batch_id", type=int, default=0, help="Batch ID to display")
@@ -118,10 +118,14 @@ if __name__ =="__main__":
     print(f"Using fixed seed {fixed_data_seed} for data loading to ensure consistency")
     set_seed(fixed_data_seed)
     
-    # Force data shuffle for all modes to ensure consistency
-    # Since we use a fixed seed, the shuffle pattern will be identical across runs
-    args.no_shuffle = False  # Enable shuffle (with fixed seed) for consistent data ordering
-    print("Enabling data shuffle with fixed seed - this ensures consistent sequence ordering across all modes")
+    # Use --shuffle flag to control whether to shuffle data
+    # Default is no shuffle (args.shuffle is False by default)
+    args.shuffle = hasattr(args, 'shuffle') and args.shuffle
+    
+    if args.shuffle:
+        print("Enabling data shuffle with fixed seed - this ensures consistent sequence ordering across all modes")
+    else:
+        print("Data shuffle disabled - sequences will be loaded in original dataset order")
     
     # Check if we should use SegmentNet (when both kf_config and seg_config are provided)
     use_segment_mode = args.kf_config is not None and args.seg_config is not None
@@ -194,9 +198,8 @@ if __name__ =="__main__":
         evaluator.multi_ib = True
         print("Compare modes enabled - using same data for fair comparison")
         
-    # Set shuffle preference if specified
-    if hasattr(args, 'no_shuffle'):
-        evaluator.no_shuffle = args.no_shuffle
+    # Pass shuffle preference to evaluator
+    evaluator.shuffle = args.shuffle
     
     # Skip previous batches based on batch_id
     skip_count = args.batch_id

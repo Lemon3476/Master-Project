@@ -25,6 +25,7 @@ if __name__ =="__main__":
                                                                        "refine-wo-phase.yaml",
                                                                        "refine-wo-score.yaml",
                                                                        "refine-wo-traj.yaml"])
+    parser.add_argument("--shuffle", action="store_true", help="Enable data shuffling. By default, no shuffle is used.")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

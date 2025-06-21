@@ -290,57 +290,57 @@ class RelMultiHeadedAttention(nn.Module):
         else:
             return self.layer_norm(hidden + output)
 
-# class ConvBlockAttention(nn.Module):
-#     def __init__(self, d_model, kernel_size, dropout=0.1, pre_lnorm=True):
-#         super(ConvBlockAttention, self).__init__()
-#         self.d_model = d_model
-#         # self.d_head = d_head >> later use for multi-head
-#         self.dropout = dropout
-#         self.pre_lnorm = pre_lnorm
+class ConvBlockAttention(nn.Module):
+    def __init__(self, d_model, kernel_size, dropout=0.1, pre_lnorm=True):
+        super(ConvBlockAttention, self).__init__()
+        self.d_model = d_model
+        # self.d_head = d_head >> later use for multi-head
+        self.dropout = dropout
+        self.pre_lnorm = pre_lnorm
 
-#         # conv block (B, T, D) -> (B, T, D)
-#         self.conv = nn.Conv1d(d_model, d_model, kernel_size=kernel_size, padding=kernel_size // 2, stride=1)
+        # conv block (B, T, D) -> (B, T, D)
+        self.conv = nn.Conv1d(d_model, d_model, kernel_size=kernel_size, padding=kernel_size // 2, stride=1)
         
-#         # feature attention (B, T, D) -> (B, 1, D)
-#         self.feat_linear = nn.Sequential(
-#             nn.Linear(d_model, d_model),
-#             nn.ReLU(),
-#             nn.Linear(d_model, d_model),
-#         )
+        # feature attention (B, T, D) -> (B, 1, D)
+        self.feat_linear = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.ReLU(),
+            nn.Linear(d_model, d_model),
+        )
 
-#         # temporal attention (B, T, D) -> (B, T, 1)
-#         self.temp_conv = nn.Conv1d(2, 1, kernel_size=kernel_size, padding=kernel_size // 2, stride=1)
+        # temporal attention (B, T, D) -> (B, T, 1)
+        self.temp_conv = nn.Conv1d(2, 1, kernel_size=kernel_size, padding=kernel_size // 2, stride=1)
 
-#         self.dropout = nn.Dropout(dropout)
-#         self.layer_norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.layer_norm = nn.LayerNorm(d_model)
 
-#     def forward(self, x, *args, **kwargs):
-#         # x.shape: (B, T, D)
-#         if self.pre_lnorm:
-#             x_in = self.layer_norm(x)
-#         else:
-#             x_in = x
+    def forward(self, x, *args, **kwargs):
+        # x.shape: (B, T, D)
+        if self.pre_lnorm:
+            x_in = self.layer_norm(x)
+        else:
+            x_in = x
 
-#         # conv block (B, T, D) -> (B, T, D)
-#         x = self.conv(x.transpose(1, 2)).transpose(1, 2)
+        # conv block (B, T, D) -> (B, T, D)
+        x = self.conv(x_in.transpose(1, 2)).transpose(1, 2)
 
-#         # feature attention
-#         feat_max = self.feat_linear(torch.max(x, dim=1, keepdim=True).values) # (B, 1, D)
-#         feat_avg = self.feat_linear(torch.mean(x, dim=1, keepdim=True))
-#         feat_attn = F.sigmoid(feat_max + feat_avg) # (B, 1, D)
-#         x = x * feat_attn
+        # feature attention
+        feat_max = self.feat_linear(torch.max(x, dim=1, keepdim=True).values) # (B, 1, D)
+        feat_avg = self.feat_linear(torch.mean(x, dim=1, keepdim=True))
+        feat_attn = F.sigmoid(feat_max + feat_avg) # (B, 1, D)
+        x = x * feat_attn
 
-#         # temporal attention
-#         temp_max = torch.max(x, dim=2, keepdim=True).values # (B, T, 1)
-#         temp_avg = torch.mean(x, dim=2, keepdim=True)
-#         temp_out = torch.cat([temp_max, temp_avg], dim=2) # (B, T, 2)
-#         temp_attn = F.sigmoid(self.temp_conv(temp_out.transpose(1, 2))).transpose(1, 2) # (B, T, 1)
-#         x = x * temp_attn
+        # temporal attention
+        temp_max = torch.max(x, dim=2, keepdim=True).values # (B, T, 1)
+        temp_avg = torch.mean(x, dim=2, keepdim=True)
+        temp_out = torch.cat([temp_max, temp_avg], dim=2) # (B, T, 2)
+        temp_attn = F.sigmoid(self.temp_conv(temp_out.transpose(1, 2))).transpose(1, 2) # (B, T, 1)
+        x = x * temp_attn
 
-#         # residual
-#         x = x_in + self.dropout(x)
+        # residual
+        x = x_in + self.dropout(x)
 
-#         if self.pre_lnorm:
-#             return x
-#         else:
-#             return self.layer_norm(x)
+        if self.pre_lnorm:
+            return x
+        else:
+            return self.layer_norm(x)

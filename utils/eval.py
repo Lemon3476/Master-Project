@@ -36,20 +36,33 @@ class Evaluator:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         dataset = MotionDataset(train=False, config=self.config)
         
-        # Always shuffle with fixed seed for consistent ordering across all modes
-        print(f"Data loader using fixed seed 1234 for consistent sequence shuffling")
+        # Check for shuffle flag, default to no shuffle unless explicitly enabled
+        use_shuffle = hasattr(args, 'shuffle') and args.shuffle
         
-        # Create PyTorch random generator with fixed seed for DataLoader
-        g = torch.Generator()
-        g.manual_seed(1234)
-        
-        # Use the generator for shuffling to ensure consistent order
-        self.dataloader = DataLoader(
-            dataset, 
-            batch_size=self.config.batch_size, 
-            shuffle=True,  # Always shuffle
-            generator=g    # With fixed generator for consistency
-        )
+        if use_shuffle:
+            # Shuffle with fixed seed for consistent ordering across all modes
+            print(f"Data loader using fixed seed 1234 for consistent sequence shuffling")
+            
+            # Create PyTorch random generator with fixed seed for DataLoader
+            g = torch.Generator()
+            g.manual_seed(1234)
+            
+            # Use the generator for shuffling to ensure consistent order
+            self.dataloader = DataLoader(
+                dataset, 
+                batch_size=self.config.batch_size, 
+                shuffle=True,  # Shuffle with fixed seed
+                generator=g    # With fixed generator for consistency
+            )
+        else:
+            # No shuffling - data will be loaded in original order from dataset
+            print(f"Data loader using NO shuffling - sequences will be loaded in original order")
+            
+            self.dataloader = DataLoader(
+                dataset, 
+                batch_size=self.config.batch_size, 
+                shuffle=False  # No shuffle
+            )
         self.skeleton = dataset.skeleton
 
         # statistics

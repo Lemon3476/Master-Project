@@ -26,6 +26,7 @@ if __name__ =="__main__":
     parser.add_argument("--ref_configs", type=str, nargs="+", default=["refine.yaml",
                                                                        "refine-w-kfemb.yaml",
                                                                        "refine-wo-mask.yaml",])
+    parser.add_argument("--shuffle", action="store_true", help="Enable data shuffling. By default, no shuffle is used.")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -36,7 +37,7 @@ if __name__ =="__main__":
 
     # dataset
     dataset = MotionDataset(train=False, config=config)
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=args.shuffle)
     mean, std = dataset.motion_statistics(device)
     traj_mean, traj_std = dataset.traj_statistics(device)
     skeleton = dataset.skeleton

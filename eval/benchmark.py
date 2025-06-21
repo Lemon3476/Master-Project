@@ -43,6 +43,7 @@ if __name__ =="__main__":
     parser.add_argument("--kf_sampling", type=str, default="score")
     parser.add_argument("--kf_param", type=float, default=None)
     parser.add_argument("--gpu", type=int, default=0, help="GPU device ID")
+    parser.add_argument("--shuffle", action="store_true", help="Enable data shuffling. By default, no shuffle is used.")
 
     # Arguments for different evaluation modes
     parser.add_argument("--eval_specific_seqs", action="store_true", help="Evaluate a specific range of sequences.")

@@ -113,6 +113,7 @@ def main(train=True):
     # arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="lafan1")
+    parser.add_argument("--shuffle", action="store_true", help="Enable data shuffling. By default, no shuffle is used.")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -121,7 +122,7 @@ def main(train=True):
 
     # dataset
     dataset = MotionDataset(train=train, config=config)
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=train)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=args.shuffle)
     skeleton = dataset.skeleton
 
     contact_idx = []
