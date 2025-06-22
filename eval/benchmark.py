@@ -8,10 +8,9 @@ import ast
 
 import torch
 
-from utils import eval_backup, utils
-from utils.eval_backup import _segment_net_transition
+from utils import utils
+from utils.eval import Evaluator, l2p, l2q, npss, foot_skate
 from utils.dataset import MotionDataset
-from model.segment_net import SegmentNet
 from model.twostage import ContextTransformer
 
 def arg_as_list(s):
@@ -80,7 +79,7 @@ if __name__ =="__main__":
         else:
             print("--- Specific Sequence Evaluation Mode ---")
 
-        evaluator = eval_backup.Evaluator(args)
+        evaluator = Evaluator(args)
         skeleton = evaluator.skeleton
         results_table = []
 
@@ -119,11 +118,11 @@ if __name__ =="__main__":
                         pred_motion_single = res["motions"][method_idx][seq_idx:seq_idx+1]
                         pred_contact_single = res["contacts"][method_idx][seq_idx:seq_idx+1]
 
-                        # Calculate metrics
-                        l2p_val = eval_backup.l2p(gt_motion_single, pred_motion_single, skeleton, evaluator.l2p_mean, evaluator.l2p_std, evaluator.config.context_frames)
-                        l2q_val = eval_backup.l2q(gt_motion_single, pred_motion_single, evaluator.config.context_frames)
-                        npss_val = eval_backup.npss(gt_motion_single, pred_motion_single, evaluator.config.context_frames)
-                        fs_val = eval_backup.foot_skate(pred_motion_single, pred_contact_single, skeleton, evaluator.contact_idx, ctx_frames=evaluator.config.context_frames)
+                        # Calculate metrics using the functions from utils.eval
+                        l2p_val = l2p(gt_motion_single, pred_motion_single, skeleton, evaluator.l2p_mean, evaluator.l2p_std, evaluator.config.context_frames)
+                        l2q_val = l2q(gt_motion_single, pred_motion_single, evaluator.config.context_frames)
+                        npss_val = npss(gt_motion_single, pred_motion_single, evaluator.config.context_frames)
+                        fs_val = foot_skate(pred_motion_single, pred_contact_single, skeleton, evaluator.contact_idx, evaluator.config.context_frames)
 
                         row = {
                             "Method": method_tag,
@@ -164,26 +163,15 @@ if __name__ =="__main__":
         if args.kf_param is not None: kf_sampling = [args.kf_sampling, args.kf_param]
         else: kf_sampling = [args.kf_sampling]
         
-        evaluator = eval_backup.Evaluator(args)
+        evaluator = Evaluator(args)
         results = { "tags": None, "l2p": [], "l2q": [], "npss": [], "foot skate": [] }
         
-        segment_model, keyframe_model, dataset = None, None, None
+        # Segment functionality has been removed
         if results["tags"] is None: results["tags"] = []
         
-        if args.use_segment:
-            print("Loading SegmentNet model...")
-            dataset = MotionDataset(train=False, config=evaluator.config)
-            mean, std = dataset.motion_statistics(device)
-            traj_mean, traj_std = dataset.traj_statistics(device)
-            kf_config = utils.load_config(f"config/{args.dataset}/{args.kf_config}")
-            keyframe_model = ContextTransformer(kf_config, dataset).to(device)
-            utils.load_model(keyframe_model, kf_config)
-            keyframe_model.eval()
-            seg_config = utils.load_config(f"config/{args.dataset}/{args.seg_config}")
-            segment_model = SegmentNet(seg_config, dataset).to(device)
-            utils.load_model(segment_model, seg_config)
-            segment_model.eval()
-            if "SegmentNet" not in results["tags"]: results["tags"].append("SegmentNet")
+        # Inform that segment functionality is no longer available
+        if args.use_segment or args.only_segment:
+            print("Warning: SegmentNet functionality has been removed. Ignoring --use_segment and --only_segment flags.")
 
         for trans in tqdm(transitions):
             num_frames = evaluator.config.context_frames + trans + 1
@@ -203,37 +191,19 @@ if __name__ =="__main__":
                 contact_list.append(res["contacts"])
                 traj_list.append(res["trajs"])
             
-            if args.use_segment and segment_model:
-                GT_motion, GT_contact, GT_traj = baseline_results[0]["motions"][0], baseline_results[0]["contacts"][0], baseline_results[0]["trajs"][0]
-                GT_phase, GT_score = None, None
-                if seg_config.use_phase:
-                    GT_phase = next(iter(torch.utils.data.DataLoader(dataset, batch_size=GT_motion.shape[0])))["phase"].to(device)[:, :num_frames]
-                if seg_config.use_score:
-                    GT_score = next(iter(torch.utils.data.DataLoader(dataset, batch_size=GT_motion.shape[0])))["score"].to(device)[:, :num_frames]
-                
-                with torch.no_grad():
-                    segment_result = _segment_net_transition(seg_config, keyframe_model, segment_model, GT_motion, mean, std, GT_contact, GT_phase, GT_traj, GT_score, traj_mean, traj_std, kf_sampling)
-                
-                seg_motion, seg_contact = segment_result["motion"], segment_result.get("contact", GT_contact)
-                # Shape matching logic
-                if seg_motion.shape[1] != GT_motion.shape[1]:
-                    padding = torch.zeros((seg_motion.shape[0], GT_motion.shape[1] - seg_motion.shape[1], seg_motion.shape[2]), device=device)
-                    seg_motion = torch.cat([seg_motion, padding], dim=1) if seg_motion.shape[1] < GT_motion.shape[1] else seg_motion[:, :GT_motion.shape[1]]
-                if seg_contact.shape[1] != GT_contact.shape[1]:
-                    padding = torch.zeros((seg_contact.shape[0], GT_contact.shape[1] - seg_contact.shape[1], seg_contact.shape[2]), device=device)
-                    seg_contact = torch.cat([seg_contact, padding], dim=1) if seg_contact.shape[1] < GT_contact.shape[1] else seg_contact[:, :GT_contact.shape[1]]
-
-                motion_list.append([GT_motion, seg_motion])
-                contact_list.append([GT_contact, seg_contact])
-                traj_list.append([GT_traj, GT_traj])
+            # Segment functionality has been removed
             
             final_motion_list = [torch.cat([b[i] for b in motion_list], dim=0) for i in range(len(motion_list[0]))]
             final_contact_list = [torch.cat([b[i] for b in contact_list], dim=0) for i in range(len(contact_list[0]))]
 
-            results["l2p"].append([eval_backup.l2p(final_motion_list[0], m, skeleton, evaluator.l2p_mean, evaluator.l2p_std) for m in final_motion_list[1:]])
-            results["l2q"].append([eval_backup.l2q(final_motion_list[0], m) for m in final_motion_list[1:]])
-            results["npss"].append([eval_backup.npss(final_motion_list[0], m) for m in final_motion_list[1:]])
-            results["foot skate"].append([eval_backup.foot_skate(m, c, skeleton, evaluator.contact_idx) for m, c in zip(final_motion_list[1:], final_contact_list[1:])])
+            # Import metrics from eval module
+            from utils.eval import l2p, l2q, npss, foot_skate
+            
+            # Calculate metrics using imported functions
+            results["l2p"].append([l2p(final_motion_list[0], m, skeleton, evaluator.l2p_mean, evaluator.l2p_std) for m in final_motion_list[1:]])
+            results["l2q"].append([l2q(final_motion_list[0], m) for m in final_motion_list[1:]])
+            results["npss"].append([npss(final_motion_list[0], m) for m in final_motion_list[1:]])
+            results["foot skate"].append([foot_skate(m, c, skeleton, evaluator.contact_idx) for m, c in zip(final_motion_list[1:], final_contact_list[1:])])
         
         # Original text file saving logic
         output_filename = f"eval/benchmark-{args.dataset}{'-segment' if args.use_segment else ''}.txt"

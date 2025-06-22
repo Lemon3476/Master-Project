@@ -58,8 +58,13 @@ class AnalysisResults:
         self.proposed_npss_scores.append(proposed_npss)
         self.proposed_foot_skate_scores.append(proposed_foot_skate)
         
-    def save_to_file(self, filename):
-        """将结果保存到Excel文件，每种过渡长度使用单独的工作表，包括两个模型的结果比较"""
+    def save_to_file(self, filename, l2p_only=False):
+        """将结果保存到Excel文件，每种过渡长度使用单独的工作表，包括两个模型的结果比较
+        
+        Args:
+            filename: 输出Excel文件名
+            l2p_only: 如果为True，只使用L2P指标进行排名
+        """
         df = pd.DataFrame({
             'Transition_Length': self.transition_lengths,
             'Batch': self.batch_indices,
@@ -110,7 +115,12 @@ class AnalysisResults:
                 # 去掉现在多余的过渡长度列
                 trans_data = trans_data.drop('Transition_Length', axis=1)
                 
-                sheet_name = f'Transition_{trans_len}'
+                # 设置工作表名称，根据是否只使用L2P进行排名
+                if l2p_only:
+                    sheet_name = f'L2P_Transition_{trans_len}'
+                else:
+                    sheet_name = f'Transition_{trans_len}'
+                
                 trans_data.to_excel(writer, sheet_name=sheet_name, index=False, float_format="%.4f")
                 print(f"  - Sheet '{sheet_name}' created with {len(trans_data)} rows")
             
@@ -192,8 +202,13 @@ class AnalysisResults:
             # 创建汇总统计表
             if summary_stats:
                 summary_df = pd.DataFrame(summary_stats)
-                summary_df.to_excel(writer, sheet_name='Summary_Stats', index=False, float_format="%.4f")
-                print(f"  - Sheet 'Summary_Stats' created")
+                # 设置工作表名称，根据是否只使用L2P进行排名
+                if l2p_only:
+                    summary_sheet_name = 'L2P_Summary_Stats'
+                else:
+                    summary_sheet_name = 'Summary_Stats'
+                summary_df.to_excel(writer, sheet_name=summary_sheet_name, index=False, float_format="%.4f")
+                print(f"  - Sheet '{summary_sheet_name}' created")
         
         print(f"Results saved to {filename}")
 
@@ -570,6 +585,8 @@ if __name__ == "__main__":
                         help='Parameter for keyframe sampling method')
     parser.add_argument('--no_viz', action='store_true', 
                         help='Skip generating visualizations after analysis')
+    parser.add_argument('--l2p_ranking', action='store_true',
+                        help='只使用L2P指标进行排名 (默认: 使用所有指标)')
     
     args = parser.parse_args()
     

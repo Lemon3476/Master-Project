@@ -104,17 +104,37 @@ def pivot_data(df, baseline_method="Ours-0", proposed_method="Ours-2", transitio
     pivoted_df = pivoted_df.reset_index()
     
     # 将列名从MultiIndex转换为单层索引，格式为 "metric_method"
-    pivoted_df.columns = [
-        f"{col[0]}_{col[1]}" if isinstance(col, tuple) and len(col) > 1 else col
-        for col in pivoted_df.columns
-    ]
+    new_columns = []
+    for col in pivoted_df.columns:
+        if isinstance(col, tuple) and len(col) > 1:
+            # 指标列，格式为 "metric_method"
+            new_columns.append(f"{col[0]}_{col[1]}")
+        elif col == "Batch" or col == "Sequence":
+            # 确保索引列没有下划线后缀
+            new_columns.append(col)
+        else:
+            # 其他任何列，保持原样
+            new_columns.append(col)
+    
+    pivoted_df.columns = new_columns
+    
+    # 额外的检查，确保没有"Batch_"或"Sequence_"这样带下划线后缀的列
+    rename_dict = {}
+    for col in pivoted_df.columns:
+        if col in ["Batch_", "Sequence_"]:
+            rename_dict[col] = col.rstrip("_")
+    
+    # 应用重命名（如果需要）
+    if rename_dict:
+        print(f"  注意: 修正列名 {', '.join(rename_dict.keys())} -> {', '.join(rename_dict.values())}")
+        pivoted_df = pivoted_df.rename(columns=rename_dict)
     
     print(f"  数据透视完成，共 {len(pivoted_df)} 行")
     
     return pivoted_df
 
 
-def calculate_advantage_score(df, baseline_method="Ours-0", proposed_method="Ours-2", transition_length=None):
+def calculate_advantage_score(df, baseline_method="Ours-0", proposed_method="Ours-2", transition_length=None, l2p_only=False):
     """
     计算综合提升分数 (Advantage Score)
     
@@ -123,18 +143,27 @@ def calculate_advantage_score(df, baseline_method="Ours-0", proposed_method="Our
         baseline_method (str): 基线方法名称
         proposed_method (str): 提议方法名称
         transition_length (int, optional): 过渡长度，仅用于日志输出
+        l2p_only (bool, optional): 是否只考虑L2P指标进行排名，默认为False
         
     Returns:
         pd.DataFrame: 添加了提升分数的DataFrame
     """
     transition_info = f"过渡长度 {transition_length}" if transition_length is not None else ""
-    print(f"计算综合提升分数 {transition_info}...")
+    
+    if l2p_only:
+        print(f"计算L2P单指标提升分数 {transition_info}...")
+    else:
+        print(f"计算综合提升分数 {transition_info}...")
     
     # 确保输入数据是副本，避免警告
     result_df = df.copy()
     
     # 指标列表
     metrics = ["L2P", "L2Q", "NPSS", "Foot_Skate"]
+    
+    # 如果只考虑L2P指标，则只使用L2P
+    if l2p_only:
+        metrics = ["L2P"]
     
     # 为每个指标计算提升率
     for metric in metrics:
@@ -165,11 +194,16 @@ def calculate_advantage_score(df, baseline_method="Ours-0", proposed_method="Our
         # 处理可能的NaN值
         result_df[z_score_col] = result_df[z_score_col].fillna(0)
     
-    # 计算综合提升分数 (四个指标的Z-Score的等权重平均)
-    z_score_cols = [f"{metric}_Z_Score" for metric in metrics]
-    result_df["Advantage_Score"] = result_df[z_score_cols].mean(axis=1)
-    
-    print(f"  {transition_info} 综合提升分数计算完成")
+    # 计算提升分数
+    if l2p_only:
+        # 如果只考虑L2P，则直接使用L2P的Z-Score作为优势分数
+        result_df["Advantage_Score"] = result_df["L2P_Z_Score"]
+        print(f"  {transition_info} L2P单指标提升分数计算完成")
+    else:
+        # 计算综合提升分数 (四个指标的Z-Score的等权重平均)
+        z_score_cols = [f"{metric}_Z_Score" for metric in metrics]
+        result_df["Advantage_Score"] = result_df[z_score_cols].mean(axis=1)
+        print(f"  {transition_info} 综合提升分数计算完成")
     
     return result_df
 
@@ -233,7 +267,7 @@ def print_top_samples(sorted_df, transition_length, top_n=20):
     print("=" * 100)
 
 
-def output_results_by_transition(results_dict, output_file, top_n=None):
+def output_results_by_transition(results_dict, output_file, top_n=None, l2p_only=False):
     """
     将不同过渡长度的结果保存到Excel文件的不同工作表
     
@@ -241,8 +275,12 @@ def output_results_by_transition(results_dict, output_file, top_n=None):
         results_dict (dict): 包含每个过渡长度的排序后DataFrame的字典
         output_file (str): 输出Excel文件路径
         top_n (int, optional): 要保留的每个过渡长度的优势样本数量。如果为None，则保留所有样本。
+        l2p_only (bool, optional): 是否只考虑L2P指标进行排名，默认为False
     """
     print(f"\nSaving sorted results to: {output_file}")
+    
+    # 检查是否使用L2P单指标排名
+    l2p_only = "_l2p_ranking" in output_file
     
     # 使用ExcelWriter一次性创建所有工作表
     with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
@@ -256,7 +294,12 @@ def output_results_by_transition(results_dict, output_file, top_n=None):
                 output_df = df
                 sample_info = "All"
             
-            sheet_name = f"Advantage_Rank_T{transition_length}"
+            # 根据是否只考虑L2P调整工作表名称
+            if l2p_only:
+                sheet_name = f"L2P_Advantage_Rank_T{transition_length}"
+            else:
+                sheet_name = f"Advantage_Rank_T{transition_length}"
+                
             output_df.to_excel(writer, sheet_name=sheet_name, index=False, float_format="%.4f")
             print(f"  - Created worksheet '{sheet_name}', containing {sample_info} samples ({len(output_df)} out of {len(df)} total)")
     
@@ -287,13 +330,29 @@ def main():
     parser.add_argument("--top", type=int, default=None,
                         help="每个过渡长度保留的优势样本数量 (默认: 所有样本)")
     
+    parser.add_argument("--l2p_ranking", action="store_true",
+                        help="只使用L2P指标进行排名 (默认: 使用所有指标)")
+    
     args = parser.parse_args()
     
     print("=" * 80)
-    print("优势样本分析工具 - 按过渡长度分离版")
+    if args.l2p_ranking:
+        print("优势样本分析工具 - 按过渡长度分离版 [L2P单指标排名]")
+    else:
+        print("优势样本分析工具 - 按过渡长度分离版")
     print("=" * 80)
     
     try:
+        # 根据是否只考虑L2P调整输出文件名
+        output_file = args.output
+        if args.l2p_ranking:
+            # 在文件扩展名前添加"_l2p_ranking"后缀
+            base, ext = os.path.splitext(output_file)
+            output_file = f"{base}_l2p_ranking{ext}"
+            print(f"使用L2P单指标排名，输出文件: {output_file}")
+        else:
+            print(f"使用综合指标排名，输出文件: {output_file}")
+            
         # 加载Excel文件中的所有工作表
         transition_sheets = load_excel_data(args.input)
         
@@ -309,8 +368,14 @@ def main():
             # 数据透视 - 针对当前过渡长度独立处理
             pivoted_df = pivot_data(df, args.baseline, args.proposed, transition_length)
             
-            # 计算综合提升分数 - 针对当前过渡长度独立计算
-            scored_df = calculate_advantage_score(pivoted_df, args.baseline, args.proposed, transition_length)
+            # 计算提升分数 - 根据l2p_ranking参数决定是否只考虑L2P
+            scored_df = calculate_advantage_score(
+                pivoted_df, 
+                args.baseline, 
+                args.proposed, 
+                transition_length,
+                l2p_only=args.l2p_ranking
+            )
             
             # 对结果排序
             sorted_df = sort_results(scored_df)
@@ -321,7 +386,7 @@ def main():
             print(f"过渡长度 {transition_length} 的数据处理完成")
         
         # 输出所有过渡长度的结果
-        output_results_by_transition(results_by_transition, args.output, args.top)
+        output_results_by_transition(results_by_transition, output_file, args.top, args.l2p_ranking)
         
         print("\n分析完成!")
         
